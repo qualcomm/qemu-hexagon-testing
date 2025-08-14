@@ -1,0 +1,333 @@
+name: Build SDK Examples
+
+on:
+  push:
+    branches: [ main, develop ]
+    tags:
+      - 'v*'
+      - 'release-*'
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  SDK_URL: "https://softwarecenter.qualcomm.com/api/download/software/sdks/Hexagon_SDK/Linux/Debian/6.3.0.0/Hexagon_SDK.zip"
+  SDK_VERSION: "6.3.0.0"
+
+jobs:
+  build-tests:
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        # Install build essentials and qemu for testing
+        sudo apt-get install -y cmake build-essential wget unzip ninja-build qemu-user zstd
+        # Install legacy ncurses library for hexagon-clang compatibility
+        sudo apt-get install -y libncurses5
+
+    - name: Download Hexagon SDK
+      run: |
+        echo "Downloading Hexagon SDK version $SDK_VERSION from: $SDK_URL"
+        if [ ! -d "Hexagon_SDK" ]; then
+          wget -q --show-progress -O hexagon_sdk.zip "$SDK_URL"
+          echo "Download completed"
+        else
+          echo "Hexagon_SDK directory already exists, skipping download"
+        fi
+
+    - name: Extract SDK
+      run: |
+        if [ -f "hexagon_sdk.zip" ]; then
+          echo "Extracting Hexagon SDK..."
+          unzip -q hexagon_sdk.zip
+          rm hexagon_sdk.zip
+          echo "SDK extracted successfully"
+        else
+          echo "Using existing Hexagon_SDK directory"
+        fi
+
+    - name: Verify SDK structure
+      run: |
+        if [ -d "Hexagon_SDK/$SDK_VERSION" ]; then
+          echo "SDK structure verified"
+          ls -la Hexagon_SDK/$SDK_VERSION/
+        else
+          echo "Error: Expected SDK version $SDK_VERSION not found"
+          echo "Available SDK versions:"
+          ls -la Hexagon_SDK/ || echo "No Hexagon_SDK directory found"
+          exit 1
+        fi
+
+    - name: Download Linux cross-compiler toolchain
+      run: |
+        echo "Downloading Hexagon Linux cross-compiler toolchain..."
+        # Download the Linux toolchain from Codelinaro
+        TOOLCHAIN_URL="https://artifacts.codelinaro.org/artifactory/codelinaro-toolchain-for-hexagon/20.1.4/clang+llvm-20.1.4-cross-hexagon-unknown-linux-musl.tar.zst"
+        wget -q --show-progress -O hexagon-toolchain.tar.zst "$TOOLCHAIN_URL"
+        echo "Extracting toolchain..."
+        tar --use-compress-program=zstd -xf hexagon-toolchain.tar.zst
+        rm hexagon-toolchain.tar.zst
+        # Set sysroot for qemu-hexagon (used by Linux build only)
+        echo "HEXAGON_SYSROOT=$(pwd)/clang+llvm-20.1.4-cross-hexagon-unknown-linux-musl/x86_64-linux-gnu/target/hexagon-unknown-linux-musl" >> $GITHUB_ENV
+        echo "HEXAGON_LINUX_TOOLCHAIN=$(pwd)/clang+llvm-20.1.4-cross-hexagon-unknown-linux-musl/x86_64-linux-gnu/bin" >> $GITHUB_ENV
+
+    - name: Setup SDK environment
+      run: |
+        # Source the SDK environment setup script if it exists
+        if [ -f "Hexagon_SDK/$SDK_VERSION/setup_sdk_env.source" ]; then
+          echo "Setting up SDK environment"
+          source Hexagon_SDK/$SDK_VERSION/setup_sdk_env.source
+        fi
+
+        # Set environment variables for Hexagon toolchain
+        echo "HEXAGON_SDK_ROOT=$(pwd)/Hexagon_SDK/$SDK_VERSION" >> $GITHUB_ENV
+        echo "HEXAGON_TOOLS_ROOT=$(pwd)/Hexagon_SDK/$SDK_VERSION/tools/HEXAGON_Tools" >> $GITHUB_ENV
+        echo "HEXAGON_SDK_TOOLCHAIN=$(pwd)/Hexagon_SDK/$SDK_VERSION/tools/HEXAGON_Tools/8.8.06/Tools/bin" >> $GITHUB_ENV
+
+    - name: Build HVX examples with CMake (Standalone)
+      run: |
+        # Configure CMake for Hexagon Standalone OS build with Ninja
+        PATH="${HEXAGON_SDK_TOOLCHAIN}:${PATH}" \
+        cmake -S sdk_examples -B build-standalone \
+          -G Ninja \
+          -DCMAKE_TOOLCHAIN_FILE=${PWD}/cmake/hexagon-standalone.cmake \
+          -DHEXAGON_ARCH=v68 \
+          -DHVX_LENGTH=128 \
+          -DBUILD_TESTS=ON \
+          -DBUILD_REFERENCE=OFF
+
+        # Build all HVX examples with Ninja
+        PATH="${HEXAGON_SDK_TOOLCHAIN}:${PATH}" \
+        cmake --build build-standalone
+
+        # Install to a staging directory
+        PATH="${HEXAGON_SDK_TOOLCHAIN}:${PATH}" \
+        DESTDIR=build-standalone/install cmake --install build-standalone
+
+        # List built executables
+        echo "Built executables (Standalone):"
+        ls -la build-standalone/bin/
+        echo "Installed files:"
+        find build-standalone/install -type f | head -20
+
+    - name: Build HVX examples with CMake (Linux)
+      run: |
+        # Configure CMake for Hexagon Linux build with Ninja
+        PATH="${HEXAGON_LINUX_TOOLCHAIN}:${PATH}" \
+        cmake -S sdk_examples -B build-linux \
+          -G Ninja \
+          -DCMAKE_TOOLCHAIN_FILE=${PWD}/cmake/hexagon-linux.cmake \
+          -DHEXAGON_ARCH=v68 \
+          -DHVX_LENGTH=128 \
+          -DBUILD_TESTS=ON \
+          -DBUILD_REFERENCE=OFF \
+          -DCMAKE_CROSSCOMPILING_EMULATOR="qemu-hexagon -L ${HEXAGON_SYSROOT}"
+
+        # Build all HVX examples with Ninja
+        PATH="${HEXAGON_LINUX_TOOLCHAIN}:${PATH}" \
+        cmake --build build-linux
+
+        # Install to a staging directory
+        PATH="${HEXAGON_LINUX_TOOLCHAIN}:${PATH}" \
+        DESTDIR=build-linux/install cmake --install build-linux
+
+        # List built executables
+        echo "Built executables (Linux):"
+        ls -la build-linux/bin/
+        echo "Installed files:"
+        find build-linux/install -type f | head -20
+
+    - name: Build Standalone System Tests
+      run: |
+        # Configure CMake for Hexagon Standalone system tests
+        PATH="${HEXAGON_SDK_TOOLCHAIN}:${PATH}" \
+        cmake -S standalone_systests -B build-systests \
+          -G Ninja \
+          -DCMAKE_TOOLCHAIN_FILE=${PWD}/cmake/hexagon-standalone.cmake \
+          -DHEXAGON_ARCH=v68
+
+        # Build all system tests with Ninja
+        PATH="${HEXAGON_SDK_TOOLCHAIN}:${PATH}" \
+        cmake --build build-systests
+
+        # Install to a staging directory
+        PATH="${HEXAGON_SDK_TOOLCHAIN}:${PATH}" \
+        DESTDIR=build-systests/install cmake --install build-systests
+
+        # List built executables
+        echo "Built system test executables:"
+        ls -la build-systests/bin/ | head -20
+        echo "Installed files:"
+        find build-systests/install -type f | head -20
+
+    - name: Run HVX example tests (Standalone)
+      run: |
+        echo "=== Running HVX Tests for Standalone Builds ==="
+        cd build-standalone
+        mkdir -p test_outputs
+
+        # Test vector file from SDK
+        TEST_VECTOR="../Hexagon_SDK/$SDK_VERSION/tools/HEXAGON_Tools/8.8.06/Examples/HVX/testvectors/football1920x1080.bin"
+
+        if [ -f "$TEST_VECTOR" ]; then
+          echo "Found test vector: $TEST_VECTOR"
+
+          # Run tests for all available executables
+          for exe in bin/*.exe; do
+            if [ -f "$exe" ]; then
+              program_name=$(basename "$exe" .exe)
+              echo "Testing $program_name (Standalone)..."
+
+              # Run the test program
+              if ./"$exe" 1920 1080 "$TEST_VECTOR" "test_outputs/${program_name}_standalone_output.bin" 2>&1; then
+                echo "✓ $program_name test completed successfully"
+              else
+                echo "✗ $program_name test failed (exit code: $?)"
+              fi
+            fi
+          done
+        else
+          echo "Warning: Test vector $TEST_VECTOR not found"
+        fi
+
+    - name: Run HVX example tests (Linux)
+      run: |
+        echo "=== Running HVX Tests for Linux Builds ==="
+        cd build-linux
+        mkdir -p test_outputs
+
+        # Test vector file from SDK
+        TEST_VECTOR="../Hexagon_SDK/$SDK_VERSION/tools/HEXAGON_Tools/8.8.06/Examples/HVX/testvectors/football1920x1080.bin"
+
+        if [ -f "$TEST_VECTOR" ]; then
+          echo "Found test vector: $TEST_VECTOR"
+
+          # Use sysroot from environment
+          SYSROOT="${HEXAGON_SYSROOT}"
+
+          # Run tests for all available executables
+          for exe in bin/*.exe; do
+            if [ -f "$exe" ]; then
+              program_name=$(basename "$exe" .exe)
+              echo "Testing $program_name (Linux)..."
+
+              # Run the test program with qemu-hexagon
+              if qemu-hexagon -L "$SYSROOT" "$exe" 1920 1080 "$TEST_VECTOR" "test_outputs/${program_name}_linux_output.bin" 2>&1; then
+                echo "✓ $program_name test completed successfully"
+              else
+                echo "✗ $program_name test failed (exit code: $?)"
+              fi
+            fi
+          done
+        else
+          echo "Warning: Test vector $TEST_VECTOR not found"
+        fi
+
+
+    - name: Create standalone test package
+      run: |
+        echo "Creating standalone HVX test package..."
+
+        # Create the standalone package directory structure
+        mkdir -p hvx_standalone_package
+
+        # Copy installed standalone build (with proper directory structure)
+        if [ -d "build-standalone/install/usr/local" ]; then
+          cp -r build-standalone/install/usr/local/HVX_* hvx_standalone_package/
+          echo "Copied standalone installed files"
+        fi
+
+        # List contents of the standalone package
+        echo "Standalone package structure:"
+        find hvx_standalone_package -type d -name "HVX_*" | head -10
+
+        # Create the standalone tarball
+        tar -czf hvx_standalone.tar.gz hvx_standalone_package/
+
+        echo "Standalone package contents:"
+        ls -la hvx_standalone_package/
+        echo ""
+        echo "Standalone tarball created:"
+        ls -la hvx_standalone.tar.gz
+
+    - name: Create Linux test package
+      run: |
+        echo "Creating Linux HVX test package..."
+
+        # Create the Linux package directory structure
+        mkdir -p hvx_linux_package
+
+        # Copy installed Linux build (with proper directory structure)
+        if [ -d "build-linux/install/usr/local" ]; then
+          cp -r build-linux/install/usr/local/HVX_* hvx_linux_package/
+          echo "Copied Linux installed files"
+        fi
+
+        # List contents of the Linux package
+        echo "Linux package structure:"
+        find hvx_linux_package -type d -name "HVX_*" | head -10
+
+        # Create the Linux tarball
+        tar -czf hvx_linux.tar.gz hvx_linux_package/
+
+        echo "Linux package contents:"
+        ls -la hvx_linux_package/
+        echo ""
+        echo "Linux tarball created:"
+        ls -la hvx_linux.tar.gz
+
+    - name: Create Standalone System Tests package
+      run: |
+        echo "Creating Standalone System Tests package..."
+
+        # Create the system tests package directory structure
+        mkdir -p systests_standalone_package
+
+        # Copy installed system tests build (with proper directory structure)
+        if [ -d "build-systests/install/usr/local" ]; then
+          cp -r build-systests/install/usr/local/StandaloneSysTests_* systests_standalone_package/
+          echo "Copied system tests installed files"
+        fi
+
+        # List contents of the system tests package
+        echo "System tests package structure:"
+        find systests_standalone_package -type d | head -10
+
+        # Create the system tests tarball
+        tar -czf systests_standalone.tar.gz systests_standalone_package/
+
+        echo "System tests package contents:"
+        ls -la systests_standalone_package/
+        echo ""
+        echo "System tests tarball created:"
+        ls -la systests_standalone.tar.gz
+
+    - name: Archive standalone test package
+      uses: actions/upload-artifact@v4
+      with:
+        name: hvx-standalone-package
+        path: hvx_standalone.tar.gz
+        retention-days: 90
+
+    - name: Archive Linux test package
+      uses: actions/upload-artifact@v4
+      with:
+        name: hvx-linux-package
+        path: hvx_linux.tar.gz
+        retention-days: 90
+
+    - name: Archive standalone system tests package
+      uses: actions/upload-artifact@v4
+      with:
+        name: systests-standalone-package
+        path: systests_standalone.tar.gz
+        retention-days: 90
+
+

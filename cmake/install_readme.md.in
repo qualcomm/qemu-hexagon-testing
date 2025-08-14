@@ -1,0 +1,27 @@
+# Hexagon HVX Examples - @CMAKE_SYSTEM_NAME@ Build
+
+## Build Configuration
+- SDK Version: @SDK_VERSION@
+- Hexagon Architecture: @HEXAGON_ARCH@
+- Vector Length: @HVX_LENGTH@ bytes
+- Build Type: @BUILD_TYPE@
+
+## Directory Structure
+- `bin/` - Executable test programs
+- `share/testvectors/` - Input test data files
+- `share/golden_outputs/` - Expected output files for validation
+
+## Running Tests
+Example command to run a test:
+```bash
+./bin/bilateral.exe 1920 1080 share/testvectors/football1920x1080.bin output.bin
+```
+
+## Available Programs
+The following HVX example programs are included in this build:
+@PROGRAM_LIST@
+
+## Notes
+- All executables have a .exe extension
+- Test vectors are binary files containing raw image data
+- Golden outputs are reference results for validation
