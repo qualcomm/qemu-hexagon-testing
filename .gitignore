@@ -1,0 +1,59 @@
+# Build directories
+build/
+build-*/
+cmake-build-*/
+
+# CMake generated files
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+CTestTestfile.cmake
+_deps/
+
+# Ninja files
+.ninja_deps
+.ninja_log
+build.ninja
+
+# Compiled output
+*.exe
+*.a
+*.so
+*.o
+*.obj
+*.bin
+
+# Test outputs
+test_outputs/
+*_output.bin
+*_qemu.bin
+*.log
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Downloaded SDK (if not tracked)
+Hexagon_SDK.zip
+Hexagon_SDK.tar.gz
+
+# Downloaded toolchains
+hexagon-linux-toolchain/
+hexagon-linux-toolchain.tar.zst
+
+# Installation directories
+install/
+_install/
+
+# Package artifacts
+*.tar.gz
+*.zip
+hvx_test_package/
