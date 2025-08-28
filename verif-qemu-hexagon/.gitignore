@@ -1,0 +1,13 @@
+*.pyc
+*.pyo
+*.tmp
+*.sw?
+*~
+test_case.S
+out_base.txt
+out_new.txt
+testit
+pmu_statsfile.txt
+/tags
+/iset.py
+/coverage
