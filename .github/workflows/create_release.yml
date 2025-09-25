@@ -42,6 +42,7 @@ jobs:
           fi
 
       - name: Create Release
+        id: create_release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -56,11 +57,45 @@ jobs:
           }
           EOF
 
-          curl -X POST \
+          RESPONSE=$(curl -X POST \
             -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer $GITHUB_TOKEN" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             -H "Content-Type: application/json" \
             https://api.github.com/repos/${{ github.repository }}/releases \
-            -d @payload.json
+            -d @payload.json)
+
+          # Extract release ID and upload URL from response
+          RELEASE_ID=$(echo "$RESPONSE" | jq -r '.id')
+          UPLOAD_URL=$(echo "$RESPONSE" | jq -r '.upload_url' | sed 's/{?name,label}//')
+
+          echo "RELEASE_ID=$RELEASE_ID" >> $GITHUB_OUTPUT
+          echo "UPLOAD_URL=$UPLOAD_URL" >> $GITHUB_OUTPUT
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+          pattern: '*-package'
+          merge-multiple: true
+
+      - name: Upload release assets
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Upload each tarball as a release asset
+          for tarball in artifacts/*.tar.gz; do
+            if [ -f "$tarball" ]; then
+              filename=$(basename "$tarball")
+              echo "Uploading $filename..."
+
+              curl -X POST \
+                -H "Accept: application/vnd.github+json" \
+                -H "Authorization: Bearer $GITHUB_TOKEN" \
+                -H "X-GitHub-Api-Version: 2022-11-28" \
+                -H "Content-Type: application/gzip" \
+                "${{ steps.create_release.outputs.UPLOAD_URL }}?name=$filename" \
+                --data-binary @"$tarball"
+            fi
+          done
 
