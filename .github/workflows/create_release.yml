@@ -65,12 +65,19 @@ jobs:
             https://api.github.com/repos/${{ github.repository }}/releases \
             -d @payload.json)
 
-          # Extract release ID and upload URL from response
+          echo "API Response:"
+          echo "$RESPONSE"
+
+          # Extract release ID from response
           RELEASE_ID=$(echo "$RESPONSE" | jq -r '.id')
-          UPLOAD_URL=$(echo "$RESPONSE" | jq -r '.upload_url' | sed 's/{?name,label}//')
+
+          if [ "$RELEASE_ID" = "null" ]; then
+            echo "Error: Failed to create release"
+            echo "Response: $RESPONSE"
+            exit 1
+          fi
 
           echo "RELEASE_ID=$RELEASE_ID" >> $GITHUB_OUTPUT
-          echo "UPLOAD_URL=$UPLOAD_URL" >> $GITHUB_OUTPUT
 
       - name: Get build workflow run
         id: get_build_run
@@ -105,10 +112,25 @@ jobs:
           run-id: ${{ steps.get_build_run.outputs.RUN_ID }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: List downloaded artifacts
+        run: |
+          echo "Contents of artifacts directory:"
+          ls -la artifacts/
+          echo "Looking for .tar.gz files:"
+          find artifacts/ -name "*.tar.gz" -ls || echo "No .tar.gz files found"
+
       - name: Upload release assets
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # Check if release ID is available
+          if [ -z "${{ steps.create_release.outputs.RELEASE_ID }}" ]; then
+            echo "Error: No release ID available"
+            exit 1
+          fi
+
+          echo "Release ID: ${{ steps.create_release.outputs.RELEASE_ID }}"
+
           # Upload each tarball as a release asset
           for tarball in artifacts/*.tar.gz; do
             if [ -f "$tarball" ]; then
@@ -122,6 +144,9 @@ jobs:
                 -H "Content-Type: application/octet-stream" \
                 "https://uploads.github.com/repos/${{ github.repository }}/releases/${{ steps.create_release.outputs.RELEASE_ID }}/assets?name=$filename" \
                 --data-binary @"$tarball"
+            else
+              echo "No .tar.gz files found in artifacts/"
+              exit 1
             fi
           done
 
