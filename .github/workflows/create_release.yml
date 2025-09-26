@@ -41,43 +41,60 @@ jobs:
             echo "EOF" >> $GITHUB_OUTPUT
           fi
 
-      - name: Create Release
+      - name: Get or Create Release
         id: create_release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Create release using GitHub API
-          cat > payload.json << 'EOF'
-          {
-            "tag_name": "${{ steps.get_tag.outputs.TAG_NAME }}",
-            "name": "Release ${{ steps.get_tag.outputs.TAG_NAME }}",
-            "body": ${{ toJSON(steps.changelog.outputs.CHANGELOG) }},
-            "draft": false,
-            "prerelease": false
-          }
-          EOF
-
-          RESPONSE=$(curl -X POST \
+          # First try to get existing release by tag
+          TAG_NAME="${{ steps.get_tag.outputs.TAG_NAME }}"
+          RESPONSE=$(curl -s \
             -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer $GITHUB_TOKEN" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
-            -H "Content-Type: application/json" \
-            https://api.github.com/repos/${{ github.repository }}/releases \
-            -d @payload.json)
+            "https://api.github.com/repos/${{ github.repository }}/releases/tags/${TAG_NAME}")
 
-          echo "API Response:"
-          echo "$RESPONSE"
+          RELEASE_ID=$(echo "$RESPONSE" | jq -r '.id // empty')
 
-          # Extract release ID from response
-          RELEASE_ID=$(echo "$RESPONSE" | jq -r '.id')
+          if [ -n "$RELEASE_ID" ] && [ "$RELEASE_ID" != "null" ]; then
+            echo "Found existing release with ID: $RELEASE_ID"
+            echo "RELEASE_ID=$RELEASE_ID" >> $GITHUB_OUTPUT
+          else
+            echo "No existing release found, creating new one..."
+            # Create release using GitHub API
+            cat > payload.json << 'EOF'
+            {
+              "tag_name": "${{ steps.get_tag.outputs.TAG_NAME }}",
+              "name": "Release ${{ steps.get_tag.outputs.TAG_NAME }}",
+              "body": ${{ toJSON(steps.changelog.outputs.CHANGELOG) }},
+              "draft": false,
+              "prerelease": false
+            }
+          EOF
 
-          if [ "$RELEASE_ID" = "null" ]; then
-            echo "Error: Failed to create release"
-            echo "Response: $RESPONSE"
-            exit 1
+            RESPONSE=$(curl -X POST \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer $GITHUB_TOKEN" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              -H "Content-Type: application/json" \
+              https://api.github.com/repos/${{ github.repository }}/releases \
+              -d @payload.json)
+
+            echo "API Response:"
+            echo "$RESPONSE"
+
+            # Extract release ID from response
+            RELEASE_ID=$(echo "$RESPONSE" | jq -r '.id')
+
+            if [ "$RELEASE_ID" = "null" ] || [ -z "$RELEASE_ID" ]; then
+              echo "Error: Failed to create release"
+              echo "Response: $RESPONSE"
+              exit 1
+            fi
+
+            echo "Release created successfully with ID: $RELEASE_ID"
+            echo "RELEASE_ID=$RELEASE_ID" >> $GITHUB_OUTPUT
           fi
-
-          echo "RELEASE_ID=$RELEASE_ID" >> $GITHUB_OUTPUT
 
       - name: Get build workflow run
         id: get_build_run
@@ -124,12 +141,13 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           # Check if release ID is available
-          if [ -z "${{ steps.create_release.outputs.RELEASE_ID }}" ]; then
-            echo "Error: No release ID available"
+          RELEASE_ID="${{ steps.create_release.outputs.RELEASE_ID }}"
+          if [ -z "$RELEASE_ID" ] || [ "$RELEASE_ID" = "null" ]; then
+            echo "Error: No release ID available (got: '$RELEASE_ID')"
             exit 1
           fi
 
-          echo "Release ID: ${{ steps.create_release.outputs.RELEASE_ID }}"
+          echo "Release ID: $RELEASE_ID"
 
           # Upload each tarball as a release asset
           for tarball in artifacts/*.tar.gz; do
@@ -142,7 +160,7 @@ jobs:
                 -H "Authorization: Bearer $GITHUB_TOKEN" \
                 -H "X-GitHub-Api-Version: 2022-11-28" \
                 -H "Content-Type: application/octet-stream" \
-                "https://uploads.github.com/repos/${{ github.repository }}/releases/${{ steps.create_release.outputs.RELEASE_ID }}/assets?name=$filename" \
+                "https://uploads.github.com/repos/${{ github.repository }}/releases/${RELEASE_ID}/assets?name=$filename" \
                 --data-binary @"$tarball"
             else
               echo "No .tar.gz files found in artifacts/"
