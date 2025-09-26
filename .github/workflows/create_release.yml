@@ -119,8 +119,8 @@ jobs:
                 -H "Accept: application/vnd.github+json" \
                 -H "Authorization: Bearer $GITHUB_TOKEN" \
                 -H "X-GitHub-Api-Version: 2022-11-28" \
-                -H "Content-Type: application/gzip" \
-                "${{ steps.create_release.outputs.UPLOAD_URL }}?name=$filename" \
+                -H "Content-Type: application/octet-stream" \
+                "https://uploads.github.com/repos/${{ github.repository }}/releases/${{ steps.create_release.outputs.RELEASE_ID }}/assets?name=$filename" \
                 --data-binary @"$tarball"
             fi
           done
