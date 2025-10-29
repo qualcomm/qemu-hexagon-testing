@@ -148,6 +148,7 @@ jobs:
         cmake -S standalone_systests -B build-systests \
           -G Ninja \
           -DCMAKE_TOOLCHAIN_FILE=${PWD}/cmake/hexagon-standalone.cmake \
+          -DCMAKE_BUILD_TYPE=Debug \
           -DHEXAGON_ARCH=v68
 
         # Build all system tests with Ninja
