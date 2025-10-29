@@ -70,6 +70,7 @@ set(STANDALONE_PROGRAMS
     k0locklock
     levelint
     llsc_on_excp
+    lock_timer_test
     memcpy
     mmu_asids
     mmu_cacheops
