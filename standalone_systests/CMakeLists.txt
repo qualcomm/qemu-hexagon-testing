@@ -60,6 +60,7 @@ set(STANDALONE_PROGRAMS
     hvx_ext
     hvx-multi
     hvx_nocoproc
+    hsv39_tlb
     inf-loop
     int_range
     invalid_insn_for_rev
