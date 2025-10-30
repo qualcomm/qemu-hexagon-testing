@@ -16,7 +16,8 @@ add_compile_options(-mhvx -mhvx-length=${HVX_LENGTH}b)
 add_link_options(-mhvx)
 
 # SDK version for install paths
-set(SDK_VERSION "6.3.0.0" CACHE STRING "Hexagon SDK version")
+set(SDK_VERSION "6.4.0.2" CACHE STRING "Hexagon SDK version")
+set(HEXAGON_TOOLS_VER "19.0.04" CACHE STRING "Hexagon tools version")
 
 # Determine install subdirectory based on build type and system
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
@@ -51,7 +52,7 @@ if(HEXAGON_ARCH)
 endif()
 
 # Common include directories from SDK
-set(HVX_EXAMPLES_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../Hexagon_SDK/6.3.0.0/tools/HEXAGON_Tools/8.8.06/Examples/HVX)
+set(HVX_EXAMPLES_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../Hexagon_SDK/${SDK_VERSION}/tools/HEXAGON_Tools/${HEXAGON_TOOLS_VER}/Examples/HVX)
 
 # Add stub headers for Linux builds BEFORE SDK headers
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
@@ -118,7 +119,7 @@ endif()
 # Function to build an HVX example program
 function(add_hvx_example PROGRAM_NAME)
     # Set the path to HVX examples in the Hexagon SDK
-    set(PROGRAM_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../Hexagon_SDK/6.3.0.0/tools/HEXAGON_Tools/8.8.06/Examples/HVX/${PROGRAM_NAME})
+    set(PROGRAM_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../Hexagon_SDK/${SDK_VERSION}/tools/HEXAGON_Tools/${HEXAGON_TOOLS_VER}/Examples/HVX/${PROGRAM_NAME})
 
     # Program-specific include directory
     include_directories(${PROGRAM_DIR}/include)

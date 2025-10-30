@@ -11,8 +11,9 @@ on:
   workflow_dispatch:
 
 env:
-  SDK_URL: "https://softwarecenter.qualcomm.com/api/download/software/sdks/Hexagon_SDK/Linux/Debian/6.3.0.0/Hexagon_SDK.zip"
-  SDK_VERSION: "6.3.0.0"
+  SDK_URL: "https://softwarecenter.qualcomm.com/api/download/software/sdks/Hexagon_SDK/Linux/Debian/6.4.0.2/Hexagon_SDK_lnx.zip"
+  SDK_VERSION: "6.4.0.2"
+  HEXAGON_TOOLS_VER: "19.0.04"
 
 jobs:
   build-tests:
@@ -89,12 +90,11 @@ jobs:
         # Set environment variables for Hexagon toolchain
         echo "HEXAGON_SDK_ROOT=$(pwd)/Hexagon_SDK/$SDK_VERSION" >> $GITHUB_ENV
         echo "HEXAGON_TOOLS_ROOT=$(pwd)/Hexagon_SDK/$SDK_VERSION/tools/HEXAGON_Tools" >> $GITHUB_ENV
-        echo "HEXAGON_SDK_TOOLCHAIN=$(pwd)/Hexagon_SDK/$SDK_VERSION/tools/HEXAGON_Tools/8.8.06/Tools/bin" >> $GITHUB_ENV
+        echo "HEXAGON_SDK_TOOLCHAIN=$(pwd)/Hexagon_SDK/$SDK_VERSION/tools/HEXAGON_Tools/$HEXAGON_TOOLS_VER/Tools/bin" >> $GITHUB_ENV
 
     - name: Build HVX examples with CMake (Standalone)
       run: |
         # Configure CMake for Hexagon Standalone OS build with Ninja
-        PATH="${HEXAGON_SDK_TOOLCHAIN}:${PATH}" \
         cmake -S sdk_examples -B build-standalone \
           -G Ninja \
           -DCMAKE_TOOLCHAIN_FILE=${PWD}/cmake/hexagon-standalone.cmake \
@@ -104,11 +104,9 @@ jobs:
           -DBUILD_REFERENCE=OFF
 
         # Build all HVX examples with Ninja
-        PATH="${HEXAGON_SDK_TOOLCHAIN}:${PATH}" \
         cmake --build build-standalone
 
         # Install to a staging directory
-        PATH="${HEXAGON_SDK_TOOLCHAIN}:${PATH}" \
         DESTDIR=build-standalone/install cmake --install build-standalone
 
         # List built executables
@@ -147,18 +145,15 @@ jobs:
     - name: Build Standalone System Tests
       run: |
         # Configure CMake for Hexagon Standalone system tests
-        PATH="${HEXAGON_SDK_TOOLCHAIN}:${PATH}" \
         cmake -S standalone_systests -B build-systests \
           -G Ninja \
           -DCMAKE_TOOLCHAIN_FILE=${PWD}/cmake/hexagon-standalone.cmake \
           -DHEXAGON_ARCH=v68
 
         # Build all system tests with Ninja
-        PATH="${HEXAGON_SDK_TOOLCHAIN}:${PATH}" \
         cmake --build build-systests
 
         # Install to a staging directory
-        PATH="${HEXAGON_SDK_TOOLCHAIN}:${PATH}" \
         DESTDIR=build-systests/install cmake --install build-systests
 
         # List built executables
@@ -174,7 +169,7 @@ jobs:
         mkdir -p test_outputs
 
         # Test vector file from SDK
-        TEST_VECTOR="../Hexagon_SDK/$SDK_VERSION/tools/HEXAGON_Tools/8.8.06/Examples/HVX/testvectors/football1920x1080.bin"
+        TEST_VECTOR="../Hexagon_SDK/$SDK_VERSION/tools/HEXAGON_Tools/$HEXAGON_TOOLS_VER/Examples/HVX/testvectors/football1920x1080.bin"
 
         if [ -f "$TEST_VECTOR" ]; then
           echo "Found test vector: $TEST_VECTOR"
@@ -204,7 +199,7 @@ jobs:
         mkdir -p test_outputs
 
         # Test vector file from SDK
-        TEST_VECTOR="../Hexagon_SDK/$SDK_VERSION/tools/HEXAGON_Tools/8.8.06/Examples/HVX/testvectors/football1920x1080.bin"
+        TEST_VECTOR="../Hexagon_SDK/$SDK_VERSION/tools/HEXAGON_Tools/$HEXAGON_TOOLS_VER/Examples/HVX/testvectors/football1920x1080.bin"
 
         if [ -f "$TEST_VECTOR" ]; then
           echo "Found test vector: $TEST_VECTOR"
