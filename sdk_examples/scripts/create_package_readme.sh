@@ -16,7 +16,7 @@ Each subdirectory follows the naming convention:
 `HVX_<SDK_VERSION>_<ARCH>_<BUILD_TYPE>/`
 
 Where:
-- SDK_VERSION: Hexagon SDK version (e.g., 6.3.0.0)
+- SDK_VERSION: Hexagon SDK version (e.g., 6.4.0.2)
 - ARCH: Hexagon architecture (e.g., v68)
 - BUILD_TYPE: Either "asm" (optimized assembly) or "c_ref" (C reference)
 
@@ -30,7 +30,7 @@ Within each directory:
 ## Usage Example
 
 ```bash
-cd HVX_6.3.0.0_v68_asm/bin
+cd HVX_6.4.0.2_v68_asm/bin
 ./bilateral.exe 1920 1080 ../share/testvectors/football1920x1080.bin output.bin
 ```
 
