@@ -57,3 +57,15 @@ _install/
 *.tar.gz
 *.zip
 hvx_test_package/
+*.pyc
+*.pyo
+*.tmp
+*.sw?
+test_case.S
+out_base.txt
+out_new.txt
+testit
+pmu_statsfile.txt
+/verif-hexagon/tags
+/verif-hexagon/iset.py
+/verif-hexagon/coverage

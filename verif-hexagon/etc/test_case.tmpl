@@ -1,0 +1,100 @@
+    .text
+
+.global memory_access
+.align 8
+memory_prefix:
+.rep ${mem_padding_repeat}
+    ${mem_init}
+.endr
+memory_access:
+.rep ${mem_repeat}
+    ${mem_init}
+.endr
+memory_suffix:
+.rep ${mem_padding_repeat}
+    ${mem_init}
+.endr
+    .type memory_access, @object
+
+.global test_end
+.global test_case
+test_case:
+${test_packets}
+test_end:
+    jumpr r31
+${invalid_packet}
+
+${jump_targets}
+
+.align 0x04
+.global gpreg_init
+gpreg_init:
+    ${gpr_init}
+    jumpr r31
+    .type gpreg_init, @function
+    .size gpreg_init, . - gpreg_init
+${invalid_packet}
+
+
+pred_init:
+    ${pred_init}
+    jumpr r31
+${invalid_packet}
+
+
+.global hvx_reg_init
+hvx_reg_init:
+
+    // Enable coprocs:
+    // r0 = ssr
+    // r0 = setbit(r0, #26)
+    // r0 = setbit(r0, #31)
+    // ssr = r0
+
+    ${hvx_init}
+    jumpr r31
+    .type hvx_reg_init, @function
+    .size hvx_reg_init, . - hvx_reg_init
+${invalid_packet}
+
+mutate_rot:
+    ${gpr_rot}
+    ${hvx_mutate}
+    jumpr r31
+${invalid_packet}
+
+
+mutate_brev:
+    ${gpr_brev}
+    ${hvx_mutate}
+    jumpr r31
+${invalid_packet}
+
+
+mutate_xor:
+    ${gpr_xor}
+    ${hvx_mutate}
+    jumpr r31
+${invalid_packet}
+
+
+mutate_flip:
+    ${gpr_flip}
+    ${hvx_mutate}
+    jumpr r31
+${invalid_packet}
+
+
+.align 0x04
+.global main
+main:
+    call gpreg_init
+    call pred_init
+    call hvx_reg_init
+
+${test_cases}
+
+    r2 = #0
+    stop(r0)
+${invalid_packet}
+
