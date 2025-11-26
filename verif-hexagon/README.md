@@ -12,9 +12,19 @@ Inspired by research from Hyunsik Jeong at [KAIST](https://en.wikipedia.org/wiki
 
 ## Usage
 
+First, you will need an `iset.py` file with the instruction semantics. By
+default, verif will use one from the `/prj` NFS path at Qualcomm machines. If
+you are not connected to Qualcomm network, though, you can use the synthetic
+`iset.py` that is generated as part of the QEMU-hexagon build at
+`<BUILDDIR>/target/hexagon/iset.py`.
+
 For an extensive test, with default parameters, run:
 
     ./packet_verif verif
+
+If you have a custom iset file, use:
+
+    ./packet_verif verif --iset <ISET_PATH>
 
 For more customization options, check:
 
