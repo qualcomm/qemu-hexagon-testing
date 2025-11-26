@@ -90,10 +90,15 @@ def load_iset(args):
         arch = args.hex_rev if args.hex_rev is not None else 73
         path = f"/prj/qct/coredev/hexagon/sitelinks/arch/pkg/arch/x86_64/v{arch}_stable/src/arch/iset.py"
     import importlib.util
-    spec = importlib.util.spec_from_file_location("iset", path)
-    iset = importlib.util.module_from_spec(spec)
-    sys.modules["iset"] = iset
-    spec.loader.exec_module(iset)
+    try:
+        spec = importlib.util.spec_from_file_location("iset", path)
+        iset = importlib.util.module_from_spec(spec)
+        sys.modules["iset"] = iset
+        spec.loader.exec_module(iset)
+    except FileNotFoundError as e:
+        log.critical((f"No iset.py file found at '{e.filename}'\n"
+                       "Please use the --iset option to specify the path"
+                       " of a custom iset file."))
     return iset
 
 def parse_args():
