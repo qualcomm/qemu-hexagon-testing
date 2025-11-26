@@ -61,6 +61,12 @@ A comprehensive collection of 60+ system-level tests for the Hexagon Standalone 
 
 HVX (Hexagon Vector eXtensions) example programs demonstrating vector processing capabilities.
 
+### Verif QEMU Hexagon
+
+"This is a quick-n-dirty project to demonstrate a way to compare execution
+between QEMU and ISS." The project is located inside the `verif-hexagon`
+directory, together with instructions on how to use it.
+
 ## Usage
 
 
