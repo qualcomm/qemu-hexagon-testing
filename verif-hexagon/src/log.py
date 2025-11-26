@@ -4,30 +4,49 @@
 #
 
 from inspect import currentframe, getframeinfo
-import os
-import logging
+import os, sys
 
 workarounds = set()
-VERBOSITY_LEVELS = [logging.CRITICAL, logging.WARNING, logging.INFO, logging.DEBUG]
 verbosity_level = 1
+DEBUG, INFO, WARNING, CRITICAL = 3, 2, 1, 0
+YELLOW = "\x1b[33;20m"
+RED = "\x1b[31;20m"
+RESET = "\x1b[0m"
+
+def print_colored(color, msg):
+    if sys.stdout.isatty():
+        print(f"{color}{msg}{RESET}")
+    else:
+        print(msg)
 
 def config(level):
     global verbosity_level
     verbosity_level = level
-    logging.basicConfig(level=VERBOSITY_LEVELS[level])
 
 def workaround(issue_id):
-    if verbosity_level >= 1 and issue_id not in workarounds:
+    if issue_id not in workarounds:
         frame = currentframe().f_back
         lineno = frame.f_lineno
         filename = os.path.basename(getframeinfo(frame).filename)
-        print(f"Warn: employing workaround for {issue_id} on {filename}:{lineno}")
+        warn(f"employing workaround for {issue_id} on {filename}:{lineno}")
         workarounds.add(issue_id)
 
-warn = logging.warn
-debug = logging.debug
-info = logging.info
-critical = logging.critical
+def warn(msg):
+    if verbosity_level >= WARNING:
+        print_colored(YELLOW, f"WARN: {msg}")
+
+def debug(msg):
+    if verbosity_level >= DEBUG:
+        print(f"DEBUG: {msg}")
+
+def info(msg):
+    if verbosity_level >= INFO:
+        print(f"INFO: {msg}")
+
+def critical(msg):
+    if verbosity_level >= CRITICAL:
+        print_colored(RED, f"ERROR: {msg}")
+        sys.exit(1)
 
 def progress_bar(title, N):
     if verbosity_level >= 1:
