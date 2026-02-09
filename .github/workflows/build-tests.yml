@@ -326,4 +326,65 @@ jobs:
         path: systests_standalone.tar.gz
         retention-days: 90
 
+  create-release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build-tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get tag name
+        id: get_tag
+        run: echo "TAG_NAME=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          # Get the previous tag
+          PREVIOUS_TAG=$(git describe --tags --abbrev=0 ${{ steps.get_tag.outputs.TAG_NAME }}^ 2>/dev/null || echo "")
+
+          # Generate changelog
+          if [ -z "$PREVIOUS_TAG" ]; then
+            echo "CHANGELOG<<EOF" >> $GITHUB_OUTPUT
+            echo "Initial release" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+          else
+            echo "CHANGELOG<<EOF" >> $GITHUB_OUTPUT
+            echo "## Changes since $PREVIOUS_TAG" >> $GITHUB_OUTPUT
+            echo "" >> $GITHUB_OUTPUT
+            git log $PREVIOUS_TAG..${{ steps.get_tag.outputs.TAG_NAME }} --pretty=format:"- %s (%h)" >> $GITHUB_OUTPUT
+            echo "" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+          pattern: '*-package'
+          merge-multiple: true
+
+      - name: List downloaded artifacts
+        run: |
+          echo "Contents of artifacts directory:"
+          ls -la artifacts/
+          echo "Looking for .tar.gz files:"
+          find artifacts/ -name "*.tar.gz" -ls || echo "No .tar.gz files found"
+
+      - name: Create release and upload assets
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_NAME: ${{ steps.get_tag.outputs.TAG_NAME }}
+          CHANGELOG: ${{ steps.changelog.outputs.CHANGELOG }}
+        run: |
+          # Create the release using gh CLI
+          gh release create "$TAG_NAME" \
+            --title "Release $TAG_NAME" \
+            --notes "$CHANGELOG" \
+            artifacts/*.tar.gz
