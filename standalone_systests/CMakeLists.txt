@@ -71,6 +71,7 @@ set(STANDALONE_PROGRAMS
     levelint
     llsc_on_excp
     lock_timer_test
+    lock_verify
     memcpy
     mmu_asids
     mmu_cacheops
