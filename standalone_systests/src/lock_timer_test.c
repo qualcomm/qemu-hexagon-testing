@@ -16,6 +16,27 @@
  * The test runs in two phases:
  * 1. k0lock/k0unlock testing
  * 2. tlblock/tlbunlock testing
+ *
+ * Running with QEMU:
+ *   qemu-system-hexagon -M sim -kernel lock_timer_test -display none \
+ *       -serial stdio
+ *
+ * Running with hexagon-sim:
+ *   This test requires the QTimer and L2VIC cosimulation models so that the
+ *   timer system registers (s57:56) produce valid counter values.  Create a
+ *   cosim config file (e.g. q6ss.cfg) with:
+ *
+ *     qtimer.so --csr_base=0x20000000 --irq_p=35,36 --freq=19200000 \
+ *         --cnttid=0x11
+ *     l2vic.so 3 0x20010000
+ *
+ *   The --csr_base must match the subsystem base reported by the cfgtable
+ *   (0x20000000 for the default hexagon-sim configuration).  Then run:
+ *
+ *     hexagon-sim -mv68 --cosim_file q6ss.cfg lock_timer_test
+ *
+ *   See $HEXAGON_TOOLS_ROOT/Examples/cosims/qtimerCfg/readme for details on
+ *   qtimer cosim options.
  */
 
 #include "cfgtable.h"
@@ -96,8 +117,12 @@ static void init_clock(void) {
   uint32_t cntp_ver = *qtmr_cntp_ver;
   printf("QTimer version: CNTP=0x%08lx\n", (unsigned long)cntp_ver);
 
-  /* Expect CNTP version to be at least 0x20020000 */
-  if (cntp_ver < 0x20020000) {
+  /*
+   * On QEMU, expect CNTP version >= 0x20020000.
+   * On hexagon-sim with qtimer cosim, the version register is not implemented
+   * and reads as 0 — this is expected and harmless.
+   */
+  if (cntp_ver != 0 && cntp_ver < 0x20020000) {
     fprintf(stderr,
             "ERROR: QTimer CNTP version 0x%08lx is less than expected "
             "0x20020000\n",
