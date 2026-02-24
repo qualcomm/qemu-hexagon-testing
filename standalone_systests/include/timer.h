@@ -34,7 +34,9 @@ uint64_t utimer_read_pair()
                  "%0 = r0\n\t"
                  "%1 = r1\n\t"
                  : "=r" (timer_low),
-                   "=r" (timer_high));
+                   "=r" (timer_high)
+                 :
+                 : "r0", "r1");
     return ((uint64_t)timer_high << 32) | timer_low;
 }
 uint64_t timer_read()
@@ -51,7 +53,9 @@ uint64_t timer_read_pair()
     asm volatile("r1:0 = s57:56\n\t"
                  "%0 = r0\n\t"
                  "%1 = r1\n\t"
-                 : "=r"(timer_low), "=r"(timer_high));
+                 : "=r"(timer_low), "=r"(timer_high)
+                 :
+                 : "r0", "r1");
     return ((uint64_t)timer_high << 32) | timer_low;
 }
 
