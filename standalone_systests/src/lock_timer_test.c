@@ -192,7 +192,14 @@ static int compare_records(const void *a, const void *b) {
 }
 
 static bool verify_no_overlaps(void) {
+  /*
+   * global_round_counter may slightly exceed the array size because multiple
+   * threads can atomically increment it before any of them check the limit.
+   * Cap to the array size to avoid reading past lock_records[].
+   */
   int total_records = global_round_counter;
+  if (total_records > N_THREADS * ROUNDS_PER_THREAD)
+    total_records = N_THREADS * ROUNDS_PER_THREAD;
 
   // Sort records by start time
   qsort(lock_records, total_records, sizeof(lock_record_t), compare_records);
@@ -292,7 +299,7 @@ static bool run_lock_test(lock_ops_t *lock_ops) {
   volatile uint64_t dummy_work = 0;
 
   // Issue SWIs while threads are working
-  while (global_round_counter < ROUNDS_PER_THREAD) {
+  while (global_round_counter < N_THREADS * ROUNDS_PER_THREAD) {
     swi(ALL_INTERRUPTS_MASK);
     swi_issued_count++;
 
