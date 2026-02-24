@@ -56,9 +56,9 @@
 
 #define N_THREADS 4
 #define STACK_SIZE 16384
-#define WORK_ITERATIONS 3000
 #define MAX_INT_NUM 8
 #define ALL_INTERRUPTS_MASK 0xff
+#define DELAY_ITERS 102400
 #define ROUNDS_PER_THREAD 400
 
 static char stack[N_THREADS][STACK_SIZE] __attribute__((__aligned__(8)));
@@ -79,8 +79,6 @@ typedef struct {
 static volatile int global_round_counter = 0;
 static lock_record_t lock_records[N_THREADS * ROUNDS_PER_THREAD];
 static volatile bool test_complete = false;
-static volatile uint64_t work_data[N_THREADS][WORK_ITERATIONS]
-    __attribute__((__aligned__(64)));
 static lock_ops_t *current_lock_ops = NULL;
 
 static atomic_int ints_by_irq[MAX_INT_NUM];
@@ -135,14 +133,6 @@ static void init_clock(void) {
   *qtmr_cntp_ctl = 1;
 }
 
-int work_values[1024];
-static void do_work(void) {
-  for (int i = 0; i < sizeof(work_values) / sizeof(work_values[0]); i++) {
-    work_values[i] += i * get_htid();
-    pause();
-  }
-}
-
 static void thread_func(void *arg) {
   int thread_id = (int)(uintptr_t)arg;
 
@@ -161,7 +151,7 @@ static void thread_func(void *arg) {
     uint64_t start_time = timer_read_pair();
 
     // Do work while holding the lock
-    do_work();
+    delay(DELAY_ITERS);
 
     uint64_t end_time = timer_read_pair();
     uint64_t dur = end_time - start_time;
@@ -253,7 +243,7 @@ static int total_int_count(void) {
 
 static void wait_for_int_count(int count) {
   while (total_int_count() < count) {
-    do_work();
+    delay(DELAY_ITERS);
   }
 }
 
