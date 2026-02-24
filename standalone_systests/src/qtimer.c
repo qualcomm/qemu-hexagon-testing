@@ -19,6 +19,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#include "timer.h"
 
 #define COMPUTE_THREADS 3
 #define STACK_SIZE 16384
@@ -39,7 +40,6 @@ typedef unsigned long long u64;
 typedef volatile unsigned long vu32; /* reqiured */
 typedef volatile unsigned long long vu64; /* required */
 
-#define QTMR_BASE ((CSR_BASE) + 0x20000)
 #define QTMR_AC_CNTACR ((vu32 *)((QTMR_BASE) + 0x40))
 #define QTMR_CNTPCT_LO ((vu32 *)((QTMR_BASE) + 0x1000))
 #define QTMR_CNTPCT_HI ((vu32 *)((QTMR_BASE) + 0x1004))
