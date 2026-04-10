@@ -33,6 +33,13 @@ jobs:
         # Install legacy ncurses library for hexagon-clang compatibility
         sudo apt-get install -y libncurses5
 
+    - name: Install Rust nightly toolchain
+      run: |
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain nightly
+        . "$HOME/.cargo/env"
+        rustup component add rust-src --toolchain nightly
+        echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
     - name: Download Hexagon SDK
       run: |
         echo "Downloading Hexagon SDK version $SDK_VERSION from: $SDK_URL"
@@ -162,6 +169,22 @@ jobs:
         ls -la build-systests/bin/ | head -20
         echo "Installed files:"
         find build-systests/install -type f | head -20
+
+    - name: Build hexagon-arch-tests (semihosting)
+      run: |
+        cd hexagon-arch-tests
+        PATH="${HEXAGON_SDK_TOOLCHAIN}:${PATH}" \
+        cargo +nightly build --release
+        echo "Built semihosting test binaries:"
+        find target/hexagon-unknown-none-elf/release -maxdepth 1 -type f -name 'test_*' | sort
+
+    - name: Build hexagon-arch-tests (UART)
+      run: |
+        cd hexagon-arch-tests
+        PATH="${HEXAGON_SDK_TOOLCHAIN}:${PATH}" \
+        cargo +nightly build --release --features uart --target-dir target-uart
+        echo "Built UART test binaries:"
+        find target-uart/hexagon-unknown-none-elf/release -maxdepth 1 -type f -name 'test_*' | sort
 
     - name: Run HVX example tests (Standalone)
       run: |
@@ -305,6 +328,36 @@ jobs:
         echo "System tests tarball created:"
         ls -la systests_standalone.tar.gz
 
+    - name: Create hexagon-arch-tests semihosting package
+      run: |
+        echo "Creating hexagon-arch-tests semihosting package..."
+        mkdir -p arch_tests_semihosting_package/bin
+        mkdir -p arch_tests_semihosting_package/cosim
+        for bin in hexagon-arch-tests/target/hexagon-unknown-none-elf/release/test_*; do
+          [ -f "$bin" ] && cp "$bin" arch_tests_semihosting_package/bin/
+        done
+        cp hexagon-arch-tests/run_tests.sh arch_tests_semihosting_package/
+        cp hexagon-arch-tests/cosim/q6ss.cfg arch_tests_semihosting_package/cosim/
+        echo "Semihosting package contents:"
+        find arch_tests_semihosting_package -type f | sort
+        tar -czf arch_tests_semihosting.tar.gz arch_tests_semihosting_package/
+        ls -la arch_tests_semihosting.tar.gz
+
+    - name: Create hexagon-arch-tests UART package
+      run: |
+        echo "Creating hexagon-arch-tests UART package..."
+        mkdir -p arch_tests_uart_package/bin
+        mkdir -p arch_tests_uart_package/cosim
+        for bin in hexagon-arch-tests/target-uart/hexagon-unknown-none-elf/release/test_*; do
+          [ -f "$bin" ] && cp "$bin" arch_tests_uart_package/bin/
+        done
+        cp hexagon-arch-tests/run_tests.sh arch_tests_uart_package/
+        cp hexagon-arch-tests/cosim/q6ss.cfg arch_tests_uart_package/cosim/
+        echo "UART package contents:"
+        find arch_tests_uart_package -type f | sort
+        tar -czf arch_tests_uart.tar.gz arch_tests_uart_package/
+        ls -la arch_tests_uart.tar.gz
+
     - name: Archive standalone test package
       uses: actions/upload-artifact@v4
       with:
@@ -324,6 +377,20 @@ jobs:
       with:
         name: systests-standalone-package
         path: systests_standalone.tar.gz
+        retention-days: 90
+
+    - name: Archive hexagon-arch-tests semihosting package
+      uses: actions/upload-artifact@v4
+      with:
+        name: arch-tests-semihosting-package
+        path: arch_tests_semihosting.tar.gz
+        retention-days: 90
+
+    - name: Archive hexagon-arch-tests UART package
+      uses: actions/upload-artifact@v4
+      with:
+        name: arch-tests-uart-package
+        path: arch_tests_uart.tar.gz
         retention-days: 90
 
   create-release:
