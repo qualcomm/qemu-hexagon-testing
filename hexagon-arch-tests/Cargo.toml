@@ -1,0 +1,80 @@
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: BSD-3-Clause-Clear
+
+[package]
+name = "hexagon-arch-tests"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+default = []
+uart = []
+
+[dependencies]
+bitflags = { version = "2", default-features = false }
+
+[profile.release]
+opt-level = 2
+lto = false
+debug = true
+
+[profile.dev]
+opt-level = 1
+debug = true
+
+[[bin]]
+name = "test_sys_regs"
+path = "src/bin/test_sys_regs.rs"
+
+[[bin]]
+name = "test_pmu"
+path = "src/bin/test_pmu.rs"
+
+[[bin]]
+name = "test_cache"
+path = "src/bin/test_cache.rs"
+
+[[bin]]
+name = "test_interrupts"
+path = "src/bin/test_interrupts.rs"
+
+[[bin]]
+name = "test_exceptions"
+path = "src/bin/test_exceptions.rs"
+
+[[bin]]
+name = "test_tlb_mmu"
+path = "src/bin/test_tlb_mmu.rs"
+
+[[bin]]
+name = "test_user_mode"
+path = "src/bin/test_user_mode.rs"
+
+[[bin]]
+name = "test_guest_mode"
+path = "src/bin/test_guest_mode.rs"
+
+[[bin]]
+name = "test_timer"
+path = "src/bin/test_timer.rs"
+
+[[bin]]
+name = "test_threads"
+path = "src/bin/test_threads.rs"
+
+[[bin]]
+name = "test_isr_stress"
+path = "src/bin/test_isr_stress.rs"
+
+[[bin]]
+name = "test_l2vic"
+path = "src/bin/test_l2vic.rs"
+
+[[bin]]
+name = "test_int_steering"
+path = "src/bin/test_int_steering.rs"
+
+[[bin]]
+name = "test_hvx_context"
+path = "src/bin/test_hvx_context.rs"
+

@@ -1,0 +1,21 @@
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: BSD-3-Clause-Clear
+
+[build]
+target = "hexagon-unknown-none-elf"
+
+[target.hexagon-unknown-none-elf]
+linker = "hexagon-clang"
+runner = "hexagon-sim --simulated_returnval --mv81 --"
+
+rustflags = [
+    "-C", "link-arg=-mv81",
+    "-C", "link-arg=-G0",
+    "-C", "link-arg=-nostdlib",
+    "-C", "target-cpu=hexagonv81",
+    "-C", "target-feature=+hvx-length128b",
+]
+
+[unstable]
+build-std = ["core"]
+build-std-features = ["compiler-builtins-mem"]
