@@ -359,35 +359,35 @@ jobs:
         ls -la arch_tests_uart.tar.gz
 
     - name: Archive standalone test package
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: hvx-standalone-package
         path: hvx_standalone.tar.gz
         retention-days: 90
 
     - name: Archive Linux test package
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: hvx-linux-package
         path: hvx_linux.tar.gz
         retention-days: 90
 
     - name: Archive standalone system tests package
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: systests-standalone-package
         path: systests_standalone.tar.gz
         retention-days: 90
 
     - name: Archive hexagon-arch-tests semihosting package
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: arch-tests-semihosting-package
         path: arch_tests_semihosting.tar.gz
         retention-days: 90
 
     - name: Archive hexagon-arch-tests UART package
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: arch-tests-uart-package
         path: arch_tests_uart.tar.gz
