@@ -450,6 +450,22 @@ jobs:
           TAG_NAME: ${{ steps.get_tag.outputs.TAG_NAME }}
           CHANGELOG: ${{ steps.changelog.outputs.CHANGELOG }}
         run: |
+          # Check if a release already exists (e.g., created via GitHub Web UI)
+          if gh release view "$TAG_NAME" &>/dev/null; then
+            echo "::error::A release for $TAG_NAME already exists."
+            echo ""
+            echo "This usually means the release was created via the GitHub Web UI."
+            echo "The correct process is to create and push a tag locally:"
+            echo ""
+            echo "  git tag $TAG_NAME"
+            echo "  git push origin $TAG_NAME"
+            echo ""
+            echo "This lets CI build, test, and create the release with artifacts."
+            echo "To fix this, delete the release (and optionally the tag) on GitHub,"
+            echo "then push the tag again."
+            exit 1
+          fi
+
           # Create the release using gh CLI
           gh release create "$TAG_NAME" \
             --title "Release $TAG_NAME" \
