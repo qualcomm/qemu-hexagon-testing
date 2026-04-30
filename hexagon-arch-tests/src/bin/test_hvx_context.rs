@@ -14,7 +14,7 @@
 #![feature(asm_experimental_arch)]
 
 use core::arch::asm;
-use core::arch::hexagon::v128::{q6_v_vsplat_r, HvxVector};
+use core::arch::hexagon::v128::{Q6_V_vsplat_R, HvxVector};
 use core::sync::atomic::{AtomicU32, Ordering};
 use hexagon_arch_tests::*;
 
@@ -50,7 +50,7 @@ impl HvxBuf {
 
 /// Splat a scalar into an HVX vector and store to an aligned buffer.
 unsafe fn hvx_splat_store(buf: *mut HvxVector, val: u32) {
-    let v = q6_v_vsplat_r(val as i32);
+    let v = Q6_V_vsplat_R(val as i32);
     core::ptr::write_volatile(buf, v);
 }
 
@@ -168,7 +168,7 @@ fn test_hvx_context_isolation() {
     let t0_ssr = (saved_ssr & !SSR_XA_MASK) | SSR_XE; // XA=0, XE=1
     write_ssr(t0_ssr);
 
-    let v_t0 = unsafe { q6_v_vsplat_r(0xAAAA_AAAA_u32 as i32) };
+    let v_t0 = unsafe { Q6_V_vsplat_R(0xAAAA_AAAA_u32 as i32) };
     unsafe {
         core::ptr::write_volatile(buf_t0.as_hvx_mut_ptr(), v_t0);
     }
