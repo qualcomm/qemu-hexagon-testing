@@ -13,8 +13,9 @@ use hexagon_arch_tests::*;
 /// Use high TLB indices that won't conflict with runtime's fixed entries.
 const TEST_TLB_IDX: u32 = 60;
 
-/// VPN for test: 1MB page 0x100 => VA 0x10000000.
-const TEST_VPN: u32 = 0x100;
+/// VPN for test: 1MB page 0x300 => VA 0x30000000.
+/// Avoids 0x100 (0x10000000) which is the PL011 UART MMIO region.
+const TEST_VPN: u32 = 0x300;
 
 /// tlbw/tlbr: write entry at test index, read back, verify fields match.
 fn test_tlb_write_read() {
