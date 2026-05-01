@@ -186,7 +186,7 @@ pub fn putc(c: u8) {
 /// UART transmit data register address.
 /// Set this to match your target machine's UART base.
 #[cfg(feature = "uart")]
-pub const UART_TX: u32 = 0xD800_0000;
+pub const UART_TX: u32 = 0x1000_0000;
 
 /// Write a single byte to the console via UART MMIO.
 #[cfg(feature = "uart")]
