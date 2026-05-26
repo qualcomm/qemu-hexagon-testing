@@ -111,12 +111,14 @@ set(STANDALONE_PROGRAMS
     vm_test
     vtcm_error
     # vwctrl                 # Disabled: missing Q6_mxmem2_bias_A intrinsic
+    sa8797p_nsp_multicore
 )
 
 # Support/utility source files that are not main programs
 set(SUPPORT_SOURCES
     src/thread_common.c
     src/util.c
+    src/mcw.c
 )
 
 # Assembly files needed for some programs

@@ -20,6 +20,8 @@ static uint32_t read_cfgtable_field(uint32_t offset)
     return val;
 }
 
+#define CFGTABLE_CORE_ID    0x70
+#define CFGTABLE_CORE_COUNT 0x74
 #define GET_SUBSYSTEM_BASE() (read_cfgtable_field(0x8) << 16)
 #define GET_FASTL2VIC_BASE() (read_cfgtable_field(0x28) << 16)
 
