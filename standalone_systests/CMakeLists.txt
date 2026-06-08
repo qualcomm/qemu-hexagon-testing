@@ -91,7 +91,7 @@ set(STANDALONE_PROGRAMS
     reg-writes
     rev
     semihost
-    # standalone_hw          # Disabled: missing test_set_prio function
+    standalone_hw
     standalone_vec
     start
     swi
@@ -172,6 +172,11 @@ endfunction()
 foreach(PROGRAM ${STANDALONE_PROGRAMS})
     add_systest_program(${PROGRAM})
 endforeach()
+
+# standalone_hw needs the test_set_prio symbol from monitor_insts.S.
+if(TARGET standalone_hw)
+    target_sources(standalone_hw PRIVATE src/monitor_insts.S)
+endif()
 
 # Special handling for programs that need assembly files
 # boot - needs special linker script handling (disabled - assembly-only, no main function)
