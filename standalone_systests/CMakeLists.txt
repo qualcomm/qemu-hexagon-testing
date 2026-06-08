@@ -56,14 +56,15 @@ set(STANDALONE_PROGRAMS
     ftrunc
     getcwd
     gregs
+    hmx
+    hsv39_tlb
     hvx_64b
     hvx_ext
     hvx-multi
     hvx_nocoproc
-    hsv39_tlb
     inf-loop
     int_range
-    invalid_coproc
+    invalid_hmx
     invalid_insn_for_rev
     invalid_opcode
     k0lock-syscfg
@@ -178,6 +179,34 @@ endforeach()
 # standalone_hw needs the test_set_prio symbol from monitor_insts.S.
 if(TARGET standalone_hw)
     target_sources(standalone_hw PRIVATE src/monitor_insts.S)
+endif()
+
+# QEMU builds both hmx and neg-no-hmx from hmx.c with HMX enabled.
+# The negative behavior is selected at QEMU runtime by not using a
+# coprocessor-enabled machine, not by compiling without -mhmx.
+set(HMX_FLAGS -mhmx -mv81)
+
+if(TARGET hmx)
+    target_compile_options(hmx PRIVATE ${HMX_FLAGS})
+    target_link_options(hmx PRIVATE ${HMX_FLAGS})
+endif()
+
+if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/src/hmx.c)
+    add_executable(neg-no-hmx src/hmx.c)
+    target_link_libraries(neg-no-hmx
+        systest_support
+        hexagon
+    )
+    target_compile_options(neg-no-hmx PRIVATE ${HMX_FLAGS})
+    target_link_options(neg-no-hmx PRIVATE ${HMX_FLAGS})
+    set_target_properties(neg-no-hmx PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+        OUTPUT_NAME neg-no-hmx
+    )
+    install(TARGETS neg-no-hmx
+        RUNTIME DESTINATION ${INSTALL_SUBDIR}/bin
+    )
+    message(STATUS "Added system test: neg-no-hmx")
 endif()
 
 # Special handling for programs that need assembly files
