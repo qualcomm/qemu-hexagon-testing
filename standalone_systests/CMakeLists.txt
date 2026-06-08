@@ -80,6 +80,7 @@ set(STANDALONE_PROGRAMS
     mmu_page_size
     mmu_permissions
     multiple_writes
+    nmi_cross_thread
     pend_wake_wait
     pendalot
     pcycle
