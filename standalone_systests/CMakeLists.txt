@@ -82,6 +82,7 @@ set(STANDALONE_PROGRAMS
     multiple_writes
     pend_wake_wait
     pendalot
+    pcycle
     pmu
     qfloat_test
     qtimer

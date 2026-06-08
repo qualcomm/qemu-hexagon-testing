@@ -13,13 +13,13 @@
 #define MAX_HW_THREADS                  6
 
 int err;
-#include "../hex_test.h"
+#include "hex_test.h"
 
 
 #define DECODE_CYCLES(cycles) cycles
 #define DECODE_OPINFO(name, action) \
     static const int CYCLES_ ## name = action;
-#include "../../../../target/hexagon/cycle_estimates.h.inc"
+#include "cycle_estimates.h.inc"
 
 static inline void __check_range(uint32_t val, uint32_t min, uint32_t max, int line)
 {
