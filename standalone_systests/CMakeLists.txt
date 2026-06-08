@@ -63,6 +63,7 @@ set(STANDALONE_PROGRAMS
     hsv39_tlb
     inf-loop
     int_range
+    invalid_coproc
     invalid_insn_for_rev
     invalid_opcode
     k0lock-syscfg
