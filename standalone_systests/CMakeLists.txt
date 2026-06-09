@@ -181,6 +181,17 @@ if(TARGET standalone_hw)
     target_sources(standalone_hw PRIVATE src/monitor_insts.S)
 endif()
 
+# mmu_permissions and mmu_cacheops need dummy_mutex.S to bypass the
+# CRT0 mutex implementation; sys_Mtxlock reads htid in user mode and
+# crashes under QEMU's privilege check.
+if(TARGET mmu_permissions)
+    target_sources(mmu_permissions PRIVATE src/dummy_mutex.S)
+endif()
+
+if(TARGET mmu_cacheops)
+    target_sources(mmu_cacheops PRIVATE src/dummy_mutex.S)
+endif()
+
 # QEMU builds both hmx and neg-no-hmx from hmx.c with HMX enabled.
 # The negative behavior is selected at QEMU runtime by not using a
 # coprocessor-enabled machine, not by compiling without -mhmx.
