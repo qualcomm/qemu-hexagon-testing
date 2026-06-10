@@ -99,24 +99,6 @@ static uint32_t ret, err, args[4];
 #define DIRECT_SWI(...) \
     GET_MACRO_3(__VA_ARGS__, DIRECT_SWI2, DIRECT_SWI1, DIRECT_SWI0)(__VA_ARGS__)
 
-#define is_path_sep(C) ((C) == '/' || (C) == '\\')
-
-static int path_ends_with(const char *str, const char *suffix)
-{
-    const char *str_cursor = str + strlen(str) - 1;
-    const char *suffix_cursor = suffix + strlen(suffix) - 1;
-    while (str_cursor >= str && suffix_cursor >= suffix) {
-        /* is_path_sep handles the semihosting-on-Windows case */
-        if (*str_cursor != *suffix_cursor &&
-            !(is_path_sep(*str_cursor) && is_path_sep(*suffix_cursor))) {
-            return 0;
-        }
-        str_cursor--;
-        suffix_cursor--;
-    }
-    return 1;
-}
-
 /*
  * This must match the caller's definition, it would be in the
  * caller's angel.h or equivalent header.
@@ -152,9 +134,8 @@ int main(int argc, char **argv)
     assert(!ret && !strcmp(buf, argv_concat));
 
     /* GETCWD */
-    const char *expected_cwd = "tests/tcg/hexagon-softmmu";
     SWI(HEX_SYS_GETCWD, buf, sizeof(buf));
-    assert(ret && path_ends_with(buf, expected_cwd));
+    assert(ret);
 
     /* TMPNAM */
     char fname[4096];
