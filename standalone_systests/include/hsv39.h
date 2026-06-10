@@ -87,25 +87,18 @@ static inline void remove_hsv39_trans(int index)
 
 static inline uint32_t tlbp64(uint32_t asid, uint64_t VA)
 {
-    uint32_t lookup_hi = ((VA >> 32) & 0xfffff) | ((asid & 0x7f) << 20);
-    uint32_t lookup_lo = (VA >> 12) & 0xfffff;
+    uint64_t lookup = (asid & 0x7f) | (uint64_t)(VA & 0xfffffffffffff000);
     uint32_t ret;
-
-    /* For 64-bit TLB lookup, we need to handle the upper bits appropriately */
-    /* This is a simplified implementation - actual HW may differ */
-    asm volatile ("%0 = tlbp(%1)\n\t" : "=r"(ret) : "r"(lookup_hi));
-    if (ret == TLB_NOT_FOUND) {
-        asm volatile ("%0 = tlbp(%1)\n\t" : "=r"(ret) : "r"(lookup_lo));
-    }
+    asm volatile ("%[ret] = tlbp(%[lookup])\n\t"
+                  : [ret] "=r" (ret)
+                  : [lookup] "r" (lookup));
     return ret;
 }
 
 static TLBEntry64 add_hsv39_tlb_entry(int index, uint64_t va, uint64_t pa,
-					            HSV39_PageSize page_size,
-					            uint32_t xwru, uint32_t asid,
-					            bool G, bool V)
+                                      HSV39_PageSize page_size, uint32_t xwru,
+                                      uint32_t asid, bool G, bool V)
 {
-
     TLBEntry64 entry = hsv39_make_tlb_entry(va, pa, page_size, xwru, asid, G);
     entry.V = V;
     int32_t lookup_index = tlbp64(asid, va);
