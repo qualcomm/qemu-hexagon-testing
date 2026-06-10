@@ -192,6 +192,13 @@ if(TARGET mmu_cacheops)
     target_sources(mmu_cacheops PRIVATE src/dummy_mutex.S)
 endif()
 
+# hsv39_tlb uses tlbp with a 64-bit register pair (Y2_tlbpp), which requires
+# -mv81 or higher even though the rest of the test suite targets v68.
+if(TARGET hsv39_tlb)
+    target_compile_options(hsv39_tlb PRIVATE -mv81)
+    target_link_options(hsv39_tlb PRIVATE -mv81)
+endif()
+
 # QEMU builds both hmx and neg-no-hmx from hmx.c with HMX enabled.
 # The negative behavior is selected at QEMU runtime by not using a
 # coprocessor-enabled machine, not by compiling without -mhmx.
