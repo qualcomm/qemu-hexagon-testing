@@ -19,64 +19,6 @@ static inline uint64_t pow4(uint64_t n)
     return 1ull << (n * 2);
 }
 
-/* HSV39 page size enumeration - powers of 4 encoding */
-typedef enum {
-    HSV39_PAGE_1M   = 0x01,
-    HSV39_PAGE_4M   = 0x04,
-    HSV39_PAGE_16M  = 0x10,
-    HSV39_PAGE_256M = 0x100,
-    HSV39_PAGE_1G   = 0x400,
-    HSV39_PAGE_4G   = 0x1000,
-    HSV39_PAGE_16G  = 0x4000,
-    HSV39_PAGE_64G  = 0x10000,
-} HSV39_PageSize;
-
-/* Extended TLB entry for 64-bit addressing */
-typedef union {
-    struct {
-        uint64_t V:1;       /* Valid bit */
-        uint64_t G:1;       /* Global bit */
-        uint64_t ASID:7;    /* Address Space ID */
-        uint64_t VPN:28;    /* Virtual Page Number */
-        uint64_t U:1;       /* User bit */
-        uint64_t R:1;       /* Read bit */
-        uint64_t W:1;       /* Write bit */
-        uint64_t X:1;       /* Execute bit */
-        uint64_t C:3;       /* Cache attributes */
-        uint64_t PPN:36;    /* Physical Page Number (36-bit) */
-        uint64_t reserved:14;
-    };
-    uint64_t raw;
-} TLBEntry64;
-
-/* HSV39 helper functions */
-static inline TLBEntry64 hsv39_make_tlb_entry(uint64_t va, uint64_t pa,
-                                               HSV39_PageSize page_size,
-                                               uint32_t xwru, uint32_t asid,
-                                               bool G)
-{
-    TLBEntry64 entry = {0};
-    uint64_t page_mask = pow4(__builtin_ctzll(page_size)) * 1024 * 1024 - 1;
-
-    entry.V = 1;
-    entry.G = G ? 1 : 0;
-    entry.ASID = asid & 0x7f;
-    entry.VPN = (va & ~page_mask) >> 12;
-    entry.U = (xwru & 0x1) ? 1 : 0;
-    entry.R = (xwru & 0x2) ? 1 : 0;
-    entry.W = (xwru & 0x4) ? 1 : 0;
-    entry.X = (xwru & 0x8) ? 1 : 0;
-    entry.C = 0x3; /* Default cache attributes */
-    entry.PPN = (pa & ~page_mask) >> 12;
-
-    return entry;
-}
-
-static inline void hsv39_write_tlb_entry(uint64_t entry_raw, int index)
-{
-    tlbw(entry_raw, index);
-}
-
 static inline void remove_hsv39_trans(int index)
 {
     TLBEntry64 entry;
