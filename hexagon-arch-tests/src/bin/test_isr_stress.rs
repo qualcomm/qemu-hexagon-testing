@@ -112,6 +112,11 @@ fn wait_for_flag(flag: &AtomicU32, expected: u32, max_iters: u32) -> bool {
     false
 }
 
+/// Wait until `tid` clears its MODECTL run bit (thread has stopped).
+/// Returns false on timeout.  Callers must assert the result: a thread that
+/// has not stopped will be reused by the next test's `start_threads()` and
+/// corrupt its shared state, turning a cleanup failure here into a confusing
+/// failure in a later, unrelated test.
 fn wait_for_modectl_thread_stopped(tid: u32, max_iters: u32) -> bool {
     let mask = 1u32 << tid;
     for _ in 0..max_iters {
@@ -354,7 +359,7 @@ fn test_int_burst_with_busy_thread() {
     // Wait for thread 1 to finish its work
     let done = wait_for_flag(&THREAD1_DONE, 1, 50000);
     check!(done);
-    wait_for_modectl_thread_stopped(1, 10000);
+    check!(wait_for_modectl_thread_stopped(1, 10000));
     check32!(HANDLER_DATA[0].load(Ordering::SeqCst), 999);
     clear_all_swi();
 }
@@ -393,7 +398,7 @@ fn test_rapid_refire_with_spinning_thread() {
 
     // Tell thread 1 to stop
     THREAD1_DONE.store(1, Ordering::SeqCst);
-    wait_for_modectl_thread_stopped(1, 10000);
+    check!(wait_for_modectl_thread_stopped(1, 10000));
     clear_all_swi();
 }
 
@@ -418,7 +423,7 @@ fn test_interrupt_during_thread_start() {
 
     let done = wait_for_flag(&THREAD1_DONE, 1, 50000);
     check!(done);
-    wait_for_modectl_thread_stopped(1, 10000);
+    check!(wait_for_modectl_thread_stopped(1, 10000));
     clear_all_swi();
 }
 
@@ -463,7 +468,7 @@ fn test_int_with_thread_wait_resume() {
 
     let done = wait_for_flag(&THREAD1_DONE, 1, 50000);
     check!(done);
-    wait_for_modectl_thread_stopped(1, 10000);
+    check!(wait_for_modectl_thread_stopped(1, 10000));
 }
 
 // -----------------------------------------------------------------------
