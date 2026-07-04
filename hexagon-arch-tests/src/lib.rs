@@ -1228,15 +1228,23 @@ pub unsafe fn write_volatile_u32(addr: *mut u32, val: u32) {
 // Delay helper
 // ---------------------------------------------------------------------------
 
-static DELAY_SCRATCH: AtomicU32 = AtomicU32::new(0);
+static mut DELAY_SCRATCH: u32 = 0;
 
-/// Execute `n` volatile store iterations to create a delay.
-/// Unlike NOP instructions which QEMU translates away, volatile memory
-/// operations force actual instruction execution.
+/// Execute `n` store iterations to create a delay.
+///
+/// The store must be *volatile*: `DELAY_SCRATCH` is never read, so a plain
+/// (or even atomic) store to it is dead code that the compiler eliminates,
+/// which previously reduced this helper to an empty function and broke
+/// timing-sensitive tests.  A volatile access may not be elided or
+/// coalesced, so each iteration forces real instruction execution.  The
+/// loop bound is passed through `black_box` so the iteration count cannot be
+/// constant-folded away either.
 #[inline(never)]
 pub fn busy_loop(n: u32) {
-    for i in 0..n {
-        DELAY_SCRATCH.store(i, Ordering::Relaxed);
+    for i in 0..core::hint::black_box(n) {
+        unsafe {
+            core::ptr::write_volatile(core::ptr::addr_of_mut!(DELAY_SCRATCH), i);
+        }
     }
 }
 
