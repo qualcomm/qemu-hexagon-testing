@@ -6,6 +6,20 @@
 //! Provides a test harness, semihosting output, system register accessors,
 //! interrupt/TLB/cache helpers, and privilege mode transitions for writing
 //! standalone Hexagon system architecture verification tests.
+//!
+//! # Minimum supported Rust toolchain
+//!
+//! Requires nightly rustc 1.98.0 (2026-07-02, LLVM 22.1.8) or newer.  Two
+//! things depend on recent nightlies:
+//!
+//! * Inline `asm!` for control registers such as FRAMEKEY (C17, introduced
+//!   in Hexagon v62) relies on rustc applying `-C target-cpu=hexagonv81` to
+//!   the inline assembler.  Older nightlies assembled inline asm for the
+//!   target default (hexagonv60), where those registers do not exist, and
+//!   rejected the mnemonic.
+//! * `test_hvx_context` imports the `Q6_V_vsplat_R` HVX intrinsic from
+//!   `core::arch::hexagon` (feature `stdarch_hexagon`); its name and
+//!   availability track the bundled `stdarch`.
 
 #![no_std]
 #![feature(asm_experimental_arch)]
