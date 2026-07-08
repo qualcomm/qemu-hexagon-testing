@@ -400,7 +400,21 @@ event_handle_reset:
 
 	.type event_handle_nmi, @function
 event_handle_nmi:
-	jump coredump
+	crswap (sp, sgp0)
+	sp = add (sp, #-32)
+	memd (sp + #0) = r1:0
+	memd (sp + #8) = r3:2
+	r0 = ssr
+	r1 = extractu(r0, #8, #0)  /* SSR.CAUSE */
+	memw(##nmi_cause) = r1
+	r3 = memw(##nmi_count)
+	r3 = add(r3, #1)
+	memw(##nmi_count) = r3
+	r3:2 = memd (sp + #8)
+	r1:0 = memd (sp + #0)
+	sp = add (sp, #32)
+	crswap (sp, sgp0)
+	rte
 	.size event_handle_nmi, . - event_handle_nmi
 
 	.type event_handle_error, @function
@@ -983,6 +997,15 @@ exception_badva:
 	.word 0
 	.global exception_count
 exception_count:
+	.word 0
+
+	/* NMI recording globals */
+	.global nmi_cause
+	.p2align 2
+nmi_cause:
+	.word 0
+	.global nmi_count
+nmi_count:
 	.word 0
 
 	/* Semihosting heap params */

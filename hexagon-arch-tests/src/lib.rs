@@ -1116,6 +1116,8 @@ extern "C" {
     pub static mut exception_elr: u32;
     pub static mut exception_badva: u32;
     pub static mut exception_count: u32;
+    pub static mut nmi_cause: u32;
+    pub static mut nmi_count: u32;
 }
 
 /// Reset all exception recording globals to zero.
@@ -1146,6 +1148,24 @@ pub fn get_exception_badva() -> u32 {
 /// Read exception count (volatile).
 pub fn get_exception_count() -> u32 {
     unsafe { core::ptr::read_volatile(&raw const exception_count) }
+}
+
+/// Reset NMI recording globals to zero.
+pub fn reset_nmi_state() {
+    unsafe {
+        core::ptr::write_volatile(&raw mut nmi_cause, 0);
+        core::ptr::write_volatile(&raw mut nmi_count, 0);
+    }
+}
+
+/// Read NMI cause (volatile).
+pub fn get_nmi_cause() -> u32 {
+    unsafe { core::ptr::read_volatile(&raw const nmi_cause) }
+}
+
+/// Read NMI count (volatile).
+pub fn get_nmi_count() -> u32 {
+    unsafe { core::ptr::read_volatile(&raw const nmi_count) }
 }
 
 // ---------------------------------------------------------------------------

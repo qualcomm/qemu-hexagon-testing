@@ -583,6 +583,178 @@ fn make_tlb_lo_4m(ppn_1m: u32, perm_bits: u32, cached: bool) -> u32 {
     ((perm_bits & 0xF) << 28) | (cache_attr << 24) | ((ppn_1m & 0x7FFF) << 9) | 0x20
 }
 
+// ---------------------------------------------------------------------------
+// TLB overlap RESOLUTION tests — what happens when overlapping entries exist
+// and actual memory accesses go through the TLB.
+//
+// Multi-TLB-match raises IMPRECISE_CAUSE_MULTI_TLB_MATCH (cause 0x44),
+// delivered as an NMI (event #1). The translation still uses the first
+// (lowest-index) match.
+//
+// These tests assert that the NMI fires.
+// ---------------------------------------------------------------------------
+
+const CAUSE_MULTI_TLB_MATCH: u32 = 0x44;
+
+const SENTINEL_A: u32 = 0xDEAD_BEEF;
+const SENTINEL_B: u32 = 0xCAFE_BABE;
+
+/// Physical pages used for overlap resolution testing.
+/// PA_A = 0x5000_0000 (VPN 0x500 in 1:1 map)
+/// PA_B = 0x6000_0000 (VPN 0x600 in 1:1 map)
+/// VA_TEST = 0x7000_0000 (VPN 0x700 — mapped to both PA_A and PA_B)
+const PA_A: u32 = 0x5000_0000;
+const PA_B: u32 = 0x6000_0000;
+const VA_TEST: u32 = 0x7000_0000;
+const VPN_TEST: u32 = 0x700;
+const PPN_A: u32 = 0x500; // PA_A >> 20
+const PPN_B: u32 = 0x600; // PA_B >> 20
+
+/// Load through overlapping TLB entries must raise an NMI.
+///
+/// Two entries map the same VA to different PAs. A multi-TLB-match
+/// raises IMPRECISE_CAUSE_MULTI_TLB_MATCH (0x44) via the NMI vector.
+fn test_overlap_load_raises_nmi() {
+    const LOW_IDX: u32 = 50;
+    const HIGH_IDX: u32 = 58;
+
+    unsafe {
+        core::ptr::write_volatile(PA_A as *mut u32, SENTINEL_A);
+        core::ptr::write_volatile(PA_B as *mut u32, SENTINEL_B);
+    }
+    syncht();
+
+    let hi = make_tlb_hi_vg(VPN_TEST, 0, true);
+    let lo_a = make_tlb_lo(PPN_A, TLB_PERM_XWRU, false);
+    let lo_b = make_tlb_lo(PPN_B, TLB_PERM_XWRU, false);
+
+    reset_nmi_state();
+    tlb_write(hi, lo_a, LOW_IDX);
+    tlb_write(hi, lo_b, HIGH_IDX);
+    isync();
+
+    // This load triggers multi-TLB-match → NMI
+    let _val = unsafe { core::ptr::read_volatile(VA_TEST as *const u32) };
+
+    let count = get_nmi_count();
+    let cause = get_nmi_cause();
+    println!("  nmi_count={} nmi_cause=0x{:02x}", count, cause);
+
+    // The NMI MUST have fired
+    check32_ne!(count, 0);
+    check32!(cause, CAUSE_MULTI_TLB_MATCH);
+
+    tlb_invalidate(LOW_IDX);
+    tlb_invalidate(HIGH_IDX);
+}
+
+/// Store through overlapping TLB entries must raise an NMI.
+///
+/// Same principle as the load test but exercises the store path.
+fn test_overlap_store_raises_nmi() {
+    const LOW_IDX: u32 = 50;
+    const HIGH_IDX: u32 = 58;
+    const STORE_VAL: u32 = 0x1234_5678;
+
+    unsafe {
+        core::ptr::write_volatile(PA_A as *mut u32, 0);
+        core::ptr::write_volatile(PA_B as *mut u32, 0);
+    }
+    syncht();
+
+    let hi = make_tlb_hi_vg(VPN_TEST, 0, true);
+    let lo_a = make_tlb_lo(PPN_A, TLB_PERM_XWRU, false);
+    let lo_b = make_tlb_lo(PPN_B, TLB_PERM_XWRU, false);
+
+    reset_nmi_state();
+    tlb_write(hi, lo_a, LOW_IDX);
+    tlb_write(hi, lo_b, HIGH_IDX);
+    isync();
+
+    // This store triggers multi-TLB-match → NMI
+    unsafe { core::ptr::write_volatile(VA_TEST as *mut u32, STORE_VAL); }
+    syncht();
+
+    let count = get_nmi_count();
+    let cause = get_nmi_cause();
+    println!("  nmi_count={} nmi_cause=0x{:02x}", count, cause);
+
+    check32_ne!(count, 0);
+    check32!(cause, CAUSE_MULTI_TLB_MATCH);
+
+    tlb_invalidate(LOW_IDX);
+    tlb_invalidate(HIGH_IDX);
+}
+
+/// Verify that the translation uses the lowest-index entry (first match).
+///
+/// This is a secondary check: the NMI fires AND the load returns data
+/// from the lowest-index mapping (as the forward linear scan dictates).
+fn test_overlap_resolution_lowest_index_wins() {
+    const LOW_IDX: u32 = 50;
+    const HIGH_IDX: u32 = 58;
+
+    unsafe {
+        core::ptr::write_volatile(PA_A as *mut u32, SENTINEL_A);
+        core::ptr::write_volatile(PA_B as *mut u32, SENTINEL_B);
+    }
+    syncht();
+
+    let hi = make_tlb_hi_vg(VPN_TEST, 0, true);
+    let lo_a = make_tlb_lo(PPN_A, TLB_PERM_XWRU, false);
+    let lo_b = make_tlb_lo(PPN_B, TLB_PERM_XWRU, false);
+
+    reset_nmi_state();
+    // LOW_IDX → PA_A, HIGH_IDX → PA_B
+    tlb_write(hi, lo_a, LOW_IDX);
+    tlb_write(hi, lo_b, HIGH_IDX);
+    isync();
+
+    let val = unsafe { core::ptr::read_volatile(VA_TEST as *const u32) };
+    println!("  load=0x{:08x} (expect SENTINEL_A=0x{:08x})", val, SENTINEL_A);
+
+    // NMI must have fired
+    check32_ne!(get_nmi_count(), 0);
+    // Lowest index wins: idx 50 → PA_A → SENTINEL_A
+    check32!(val, SENTINEL_A);
+
+    tlb_invalidate(LOW_IDX);
+    tlb_invalidate(HIGH_IDX);
+}
+
+/// Same as above with reversed index assignment to confirm it's truly
+/// lowest-index, not first-written or content-dependent.
+fn test_overlap_resolution_lowest_index_reversed() {
+    const LOW_IDX: u32 = 50;
+    const HIGH_IDX: u32 = 58;
+
+    unsafe {
+        core::ptr::write_volatile(PA_A as *mut u32, SENTINEL_A);
+        core::ptr::write_volatile(PA_B as *mut u32, SENTINEL_B);
+    }
+    syncht();
+
+    let hi = make_tlb_hi_vg(VPN_TEST, 0, true);
+    let lo_a = make_tlb_lo(PPN_A, TLB_PERM_XWRU, false);
+    let lo_b = make_tlb_lo(PPN_B, TLB_PERM_XWRU, false);
+
+    reset_nmi_state();
+    // LOW_IDX → PA_B, HIGH_IDX → PA_A (reversed)
+    tlb_write(hi, lo_b, LOW_IDX);
+    tlb_write(hi, lo_a, HIGH_IDX);
+    isync();
+
+    let val = unsafe { core::ptr::read_volatile(VA_TEST as *const u32) };
+    println!("  load=0x{:08x} (expect SENTINEL_B=0x{:08x})", val, SENTINEL_B);
+
+    check32_ne!(get_nmi_count(), 0);
+    // Lowest index (50) maps to PA_B → SENTINEL_B
+    check32!(val, SENTINEL_B);
+
+    tlb_invalidate(LOW_IDX);
+    tlb_invalidate(HIGH_IDX);
+}
+
 #[no_mangle]
 pub extern "C" fn rust_main() -> i32 {
     test_suite_begin("TLB/MMU");
@@ -609,6 +781,12 @@ pub extern "C" fn rust_main() -> i32 {
     run_test("tlboc_no_overlap_different_page_sizes", test_tlboc_no_overlap_different_page_sizes);
     run_test("ctlbw_ignores_invalid_entries", test_ctlbw_ignores_invalid_entries);
     run_test("tlboc_incoming_global_no_bypass", test_tlboc_incoming_global_no_bypass);
+
+    // Overlap resolution tests — assert multi-TLB-match NMI fires
+    run_test("overlap_load_raises_nmi", test_overlap_load_raises_nmi);
+    run_test("overlap_store_raises_nmi", test_overlap_store_raises_nmi);
+    run_test("overlap_lowest_idx_wins", test_overlap_resolution_lowest_index_wins);
+    run_test("overlap_lowest_idx_reversed", test_overlap_resolution_lowest_index_reversed);
 
     test_suite_end() as i32
 }
