@@ -3,11 +3,14 @@
 
 //! TLB/MMU operation tests for Hexagon v81.
 //!
-//! Tests TLB read/write/probe, invalidation, ASID matching.
+//! Tests TLB read/write/probe, invalidation, ASID matching,
+//! and overlapping entry detection via ctlbw/tlboc.
 
 #![no_std]
 #![no_main]
+#![feature(asm_experimental_arch)]
 
+use core::arch::asm;
 use hexagon_arch_tests::*;
 
 /// Use high TLB indices that won't conflict with runtime's fixed entries.
@@ -16,6 +19,79 @@ const TEST_TLB_IDX: u32 = 60;
 /// VPN for test: 1MB page 0x300 => VA 0x30000000.
 /// Avoids 0x100 (0x10000000) which is the PL011 UART MMIO region.
 const TEST_VPN: u32 = 0x300;
+
+// ---------------------------------------------------------------------------
+// TLB entry helpers with correct V/G encoding for overlap tests
+// ---------------------------------------------------------------------------
+
+/// Build a TLB hi word (R1 of the R1:0 pair) with explicit V and G bits.
+///
+/// TLB register layout (R1 = bits 63:32 of TLB entry):
+///   bit 31 = V (valid)
+///   bit 30 = G (global)
+///   bits 26:20 = ASID
+///   bits 19:0 = VPN (VA[31:12] for 1MB page = vpn_1m in bits [19:8])
+///
+/// The existing `make_tlb_hi` always sets V=1 G=1 (0xC000_0000). This
+/// helper allows controlling G independently for overlap semantics testing.
+fn make_tlb_hi_vg(vpn_1m: u32, asid: u32, global: bool) -> u32 {
+    let v_bit: u32 = 1 << 31;
+    let g_bit: u32 = if global { 1 << 30 } else { 0 };
+    v_bit | g_bit | ((asid & 0x7F) << 20) | ((vpn_1m & 0xFFF) << 8)
+}
+
+/// Build a TLB hi word for a 4MB page with correct V/G encoding.
+fn make_tlb_hi_vg_4m(vpn_1m: u32, asid: u32, global: bool) -> u32 {
+    make_tlb_hi_vg(vpn_1m, asid, global)
+}
+
+// ---------------------------------------------------------------------------
+// ctlbw / tlboc wrappers
+// ---------------------------------------------------------------------------
+
+/// Conditional TLB write: checks if entry (hi:lo) would overlap any existing
+/// entry. If no overlap, writes to `idx` and returns 0x8000_0000.
+/// If single overlap, does NOT write and returns the overlapping index.
+/// If multiple overlaps, returns 0xFFFF_FFFF.
+#[inline(always)]
+fn ctlbw(hi: u32, lo: u32, idx: u32) -> u32 {
+    let result: u32;
+    unsafe {
+        asm!(
+            "r1:0 = combine({hi}, {lo})",
+            "{res} = ctlbw(r1:0, {idx})",
+            hi = in(reg) hi,
+            lo = in(reg) lo,
+            idx = in(reg) idx,
+            res = out(reg) result,
+            out("r0") _,
+            out("r1") _,
+            options(nostack),
+        );
+    }
+    result
+}
+
+/// TLB overlap check: checks if entry (hi:lo) would overlap any existing
+/// entry. Returns overlapping index, 0x8000_0000 (none), or 0xFFFF_FFFF
+/// (multiple overlaps). Does NOT write.
+#[inline(always)]
+fn tlboc(hi: u32, lo: u32) -> u32 {
+    let result: u32;
+    unsafe {
+        asm!(
+            "r1:0 = combine({hi}, {lo})",
+            "{res} = tlboc(r1:0)",
+            hi = in(reg) hi,
+            lo = in(reg) lo,
+            res = out(reg) result,
+            out("r0") _,
+            out("r1") _,
+            options(nostack),
+        );
+    }
+    result
+}
 
 /// tlbw/tlbr: write entry at test index, read back, verify fields match.
 fn test_tlb_write_read() {
@@ -220,6 +296,293 @@ fn test_tlb_permissions() {
     tlb_invalidate(TEST_TLB_IDX);
 }
 
+// ---------------------------------------------------------------------------
+// Overlap detection tests (ctlbw / tlboc)
+// ---------------------------------------------------------------------------
+
+/// tlboc with no overlap: check an entry against an empty TLB region.
+/// Should return 0x8000_0000 (no overlap found).
+fn test_tlboc_no_overlap() {
+    // Use VPN 0x400 which is not mapped anywhere in our test region.
+    let hi = make_tlb_hi_vg(0x400, 0, true);
+    let lo = make_tlb_lo(0x400, TLB_PERM_XWRU, true);
+
+    let result = tlboc(hi, lo);
+    check32!(result, 0x8000_0000);
+}
+
+/// ctlbw with no overlap: entry should be written and return 0x8000_0000.
+fn test_ctlbw_no_overlap_writes() {
+    const IDX: u32 = 55;
+    let hi = make_tlb_hi_vg(0x410, 0, true);
+    let lo = make_tlb_lo(0x410, TLB_PERM_XWRU, true);
+
+    let result = ctlbw(hi, lo, IDX);
+    isync();
+
+    // Should succeed: 0x8000_0000 means "no overlap, entry written"
+    check32!(result, 0x8000_0000);
+
+    // Verify the entry was actually written
+    let (read_hi, read_lo) = tlb_read(IDX);
+    check32!(read_hi, hi);
+    check32!(read_lo, lo);
+
+    // Clean up
+    tlb_invalidate(IDX);
+}
+
+/// ctlbw with single overlap: same VPN + same ASID already exists.
+/// Should NOT write and return the index of the overlapping entry.
+fn test_ctlbw_single_overlap_same_vpn_asid() {
+    const EXISTING_IDX: u32 = 56;
+    const NEW_IDX: u32 = 57;
+
+    // Install an existing non-global entry with ASID=3
+    let hi = make_tlb_hi_vg(0x420, 3, false);
+    let lo = make_tlb_lo(0x420, TLB_PERM_XWRU, true);
+    tlb_write(hi, lo, EXISTING_IDX);
+    isync();
+
+    // Try ctlbw with the same VPN and same ASID at a different index
+    let new_hi = make_tlb_hi_vg(0x420, 3, false);
+    let new_lo = make_tlb_lo(0x500, TLB_PERM_XWRU, true); // different PPN
+    let result = ctlbw(new_hi, new_lo, NEW_IDX);
+
+    // Should return the index of the overlapping entry
+    check32!(result, EXISTING_IDX);
+
+    // Verify the new entry was NOT written
+    let (read_hi, _) = tlb_read(NEW_IDX);
+    check32_ne!(read_hi, new_hi);
+
+    // Clean up
+    tlb_invalidate(EXISTING_IDX);
+    tlb_invalidate(NEW_IDX);
+}
+
+/// tlboc detects overlap when existing entry is global.
+/// A global entry overlaps with any ASID if VPN ranges intersect.
+fn test_tlboc_overlap_global_entry() {
+    const EXISTING_IDX: u32 = 56;
+
+    // Install a global entry (G=1)
+    let hi = make_tlb_hi_vg(0x430, 0, true);
+    let lo = make_tlb_lo(0x430, TLB_PERM_XWRU, true);
+    tlb_write(hi, lo, EXISTING_IDX);
+    isync();
+
+    // Check overlap with a non-global entry at the same VPN but different ASID
+    let check_hi = make_tlb_hi_vg(0x430, 5, false);
+    let check_lo = make_tlb_lo(0x430, TLB_PERM_XWRU, true);
+    let result = tlboc(check_hi, check_lo);
+
+    // Should detect the overlap because existing entry is global
+    check32!(result, EXISTING_IDX);
+
+    // Clean up
+    tlb_invalidate(EXISTING_IDX);
+}
+
+/// tlboc reports no overlap when ASIDs differ and neither entry is global.
+/// The overlap check ignores the incoming entry's G bit, but still requires
+/// ASIDs to match (or the existing entry to be global).
+fn test_tlboc_no_overlap_different_asid() {
+    const EXISTING_IDX: u32 = 56;
+
+    // Install a non-global entry with ASID=3
+    let hi = make_tlb_hi_vg(0x440, 3, false);
+    let lo = make_tlb_lo(0x440, TLB_PERM_XWRU, true);
+    tlb_write(hi, lo, EXISTING_IDX);
+    isync();
+
+    // Check overlap with same VPN but ASID=7 (different), non-global
+    let check_hi = make_tlb_hi_vg(0x440, 7, false);
+    let check_lo = make_tlb_lo(0x440, TLB_PERM_XWRU, true);
+    let result = tlboc(check_hi, check_lo);
+
+    // Should NOT overlap because ASIDs differ and existing is non-global
+    check32!(result, 0x8000_0000);
+
+    // Clean up
+    tlb_invalidate(EXISTING_IDX);
+}
+
+/// ctlbw with multiple overlapping entries returns 0xFFFF_FFFF.
+fn test_ctlbw_multi_overlap() {
+    const IDX_A: u32 = 54;
+    const IDX_B: u32 = 55;
+    const NEW_IDX: u32 = 56;
+
+    // Install two global entries at the same VPN (deliberately creating overlap)
+    let hi_a = make_tlb_hi_vg(0x450, 0, true);
+    let lo_a = make_tlb_lo(0x450, TLB_PERM_XWRU, true);
+    let hi_b = make_tlb_hi_vg(0x450, 0, true);
+    let lo_b = make_tlb_lo(0x451, TLB_PERM_XWRU, true); // different PPN
+
+    // Write both directly (bypassing ctlbw) to create intentional duplicates
+    tlb_write(hi_a, lo_a, IDX_A);
+    tlb_write(hi_b, lo_b, IDX_B);
+    isync();
+
+    // Now ctlbw for the same VPN should detect multiple overlaps
+    let new_hi = make_tlb_hi_vg(0x450, 0, true);
+    let new_lo = make_tlb_lo(0x452, TLB_PERM_XWRU, true);
+    let result = ctlbw(new_hi, new_lo, NEW_IDX);
+
+    // 0xFFFF_FFFF means multiple overlaps detected
+    check32!(result, 0xFFFF_FFFF);
+
+    // Clean up
+    tlb_invalidate(IDX_A);
+    tlb_invalidate(IDX_B);
+    tlb_invalidate(NEW_IDX);
+}
+
+/// tlboc with multiple overlapping entries returns 0xFFFF_FFFF.
+fn test_tlboc_multi_overlap() {
+    const IDX_A: u32 = 54;
+    const IDX_B: u32 = 55;
+
+    // Create two entries at the same VPN (both global)
+    let hi_a = make_tlb_hi_vg(0x460, 0, true);
+    let lo_a = make_tlb_lo(0x460, TLB_PERM_XWRU, true);
+    let hi_b = make_tlb_hi_vg(0x460, 0, true);
+    let lo_b = make_tlb_lo(0x461, TLB_PERM_XWRU, true);
+
+    tlb_write(hi_a, lo_a, IDX_A);
+    tlb_write(hi_b, lo_b, IDX_B);
+    isync();
+
+    // tlboc should detect multiple
+    let check_hi = make_tlb_hi_vg(0x460, 0, true);
+    let check_lo = make_tlb_lo(0x462, TLB_PERM_XWRU, true);
+    let result = tlboc(check_hi, check_lo);
+
+    check32!(result, 0xFFFF_FFFF);
+
+    // Clean up
+    tlb_invalidate(IDX_A);
+    tlb_invalidate(IDX_B);
+}
+
+/// Overlap detection with different page sizes: a 4MB page overlaps
+/// multiple 1MB pages within its range.
+///
+/// A 4MB entry covers VPN range [base, base+3] in 1MB units.
+/// A 1MB entry within that range should be detected as overlapping.
+fn test_tlboc_overlap_different_page_sizes() {
+    const EXISTING_IDX: u32 = 56;
+
+    // Install a 4MB global page at VPN 0x480 (VA 0x48000000, covers 0x480-0x483)
+    let hi_4m = make_tlb_hi_vg_4m(0x480, 0, true);
+    let lo_4m = make_tlb_lo_4m(0x480, TLB_PERM_XWRU, true);
+    tlb_write(hi_4m, lo_4m, EXISTING_IDX);
+    isync();
+
+    // Check overlap with a 1MB entry at VPN 0x481 (within the 4MB range)
+    let check_hi = make_tlb_hi_vg(0x481, 0, true);
+    let check_lo = make_tlb_lo(0x481, TLB_PERM_XWRU, true);
+    let result = tlboc(check_hi, check_lo);
+
+    // Should detect overlap
+    check32!(result, EXISTING_IDX);
+
+    // Clean up
+    tlb_invalidate(EXISTING_IDX);
+}
+
+/// Overlap detection: 1MB entry does NOT overlap a 4MB entry at a
+/// non-overlapping base address.
+fn test_tlboc_no_overlap_different_page_sizes() {
+    const EXISTING_IDX: u32 = 56;
+
+    // 4MB page at VPN 0x480 covers VA range [0x48000000, 0x4C000000)
+    let hi_4m = make_tlb_hi_vg_4m(0x480, 0, true);
+    let lo_4m = make_tlb_lo_4m(0x480, TLB_PERM_XWRU, true);
+    tlb_write(hi_4m, lo_4m, EXISTING_IDX);
+    isync();
+
+    // Check a 1MB entry at VPN 0x490 (outside the 4MB range)
+    let check_hi = make_tlb_hi_vg(0x490, 0, true);
+    let check_lo = make_tlb_lo(0x490, TLB_PERM_XWRU, true);
+    let result = tlboc(check_hi, check_lo);
+
+    // Should NOT overlap
+    check32!(result, 0x8000_0000);
+
+    // Clean up
+    tlb_invalidate(EXISTING_IDX);
+}
+
+/// ctlbw overlap check ignores invalid entries: an invalid entry at the
+/// same VPN should NOT cause an overlap detection.
+fn test_ctlbw_ignores_invalid_entries() {
+    const EXISTING_IDX: u32 = 56;
+    const NEW_IDX: u32 = 57;
+
+    // Write a valid entry, then invalidate it
+    let hi = make_tlb_hi_vg(0x4A0, 0, true);
+    let lo = make_tlb_lo(0x4A0, TLB_PERM_XWRU, true);
+    tlb_write(hi, lo, EXISTING_IDX);
+    isync();
+    tlb_invalidate(EXISTING_IDX);
+
+    // Now ctlbw with the same VPN should succeed (no valid overlap)
+    let new_hi = make_tlb_hi_vg(0x4A0, 0, true);
+    let new_lo = make_tlb_lo(0x4A0, TLB_PERM_XWRU, true);
+    let result = ctlbw(new_hi, new_lo, NEW_IDX);
+    isync();
+
+    // Should succeed: no valid overlapping entry
+    check32!(result, 0x8000_0000);
+
+    // Verify it was written
+    let (read_hi, read_lo) = tlb_read(NEW_IDX);
+    check32!(read_hi, new_hi);
+    check32!(read_lo, new_lo);
+
+    // Clean up
+    tlb_invalidate(NEW_IDX);
+}
+
+/// The overlap check ignores the incoming entry's Global bit.
+/// Verify: a new global entry still does NOT overlap an existing non-global
+/// entry with a different ASID (the incoming G=1 doesn't expand the match).
+fn test_tlboc_incoming_global_no_bypass() {
+    const EXISTING_IDX: u32 = 56;
+
+    // Install a non-global entry with ASID=3
+    let hi = make_tlb_hi_vg(0x4B0, 3, false);
+    let lo = make_tlb_lo(0x4B0, TLB_PERM_XWRU, true);
+    tlb_write(hi, lo, EXISTING_IDX);
+    isync();
+
+    // Check overlap with incoming entry that IS global but has ASID=7
+    // Incoming G bit is ignored, so this should NOT match
+    // (existing is non-global + ASID mismatch)
+    let check_hi = make_tlb_hi_vg(0x4B0, 7, true); // incoming G=1
+    let check_lo = make_tlb_lo(0x4B0, TLB_PERM_XWRU, true);
+    let result = tlboc(check_hi, check_lo);
+
+    // Should NOT overlap
+    check32!(result, 0x8000_0000);
+
+    // Clean up
+    tlb_invalidate(EXISTING_IDX);
+}
+
+// ---------------------------------------------------------------------------
+// Helper: make 4MB TLB entries
+// ---------------------------------------------------------------------------
+
+/// Build a TLB lo word for a 4MB page.
+/// For 4MB: PPN[5:0] = 10_0000 (0x20), S=0. Size field = bits [5:0] = 0x20.
+fn make_tlb_lo_4m(ppn_1m: u32, perm_bits: u32, cached: bool) -> u32 {
+    let cache_attr: u32 = if cached { 0x07 } else { 0x04 };
+    ((perm_bits & 0xF) << 28) | (cache_attr << 24) | ((ppn_1m & 0x7FFF) << 9) | 0x20
+}
+
 #[no_mangle]
 pub extern "C" fn rust_main() -> i32 {
     test_suite_begin("TLB/MMU");
@@ -233,6 +596,19 @@ pub extern "C" fn rust_main() -> i32 {
     run_test("tlb_overwrite", test_tlb_overwrite);
     run_test("tlb_asid_match", test_tlb_asid_match);
     run_test("tlb_permissions", test_tlb_permissions);
+
+    // Overlap detection tests
+    run_test("tlboc_no_overlap", test_tlboc_no_overlap);
+    run_test("ctlbw_no_overlap_writes", test_ctlbw_no_overlap_writes);
+    run_test("ctlbw_single_overlap_same_vpn_asid", test_ctlbw_single_overlap_same_vpn_asid);
+    run_test("tlboc_overlap_global_entry", test_tlboc_overlap_global_entry);
+    run_test("tlboc_no_overlap_different_asid", test_tlboc_no_overlap_different_asid);
+    run_test("ctlbw_multi_overlap", test_ctlbw_multi_overlap);
+    run_test("tlboc_multi_overlap", test_tlboc_multi_overlap);
+    run_test("tlboc_overlap_different_page_sizes", test_tlboc_overlap_different_page_sizes);
+    run_test("tlboc_no_overlap_different_page_sizes", test_tlboc_no_overlap_different_page_sizes);
+    run_test("ctlbw_ignores_invalid_entries", test_ctlbw_ignores_invalid_entries);
+    run_test("tlboc_incoming_global_no_bypass", test_tlboc_incoming_global_no_bypass);
 
     test_suite_end() as i32
 }
