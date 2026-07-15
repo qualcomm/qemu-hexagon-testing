@@ -237,7 +237,7 @@ int main(int argc, char **argv)
     assert(ret);
 
     /* OPENDIR */
-    char *dname = "./_semihost_dir";
+    char *dname = argv[1];
     DIRECT_SWI(HEX_SYS_OPENDIR, dname);
     assert(ret);
     int dir_index = ret;

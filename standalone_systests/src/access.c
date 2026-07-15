@@ -5,9 +5,9 @@
 
 #include <unistd.h>
 int
-main()
+main(int argc, char **argv)
 {
-    int pass = access ("_testfile_access", (R_OK | W_OK));
+    int pass = access (argv[1], (R_OK | W_OK));
     int fail = access ((const char *)0, (R_OK | W_OK | X_OK));
     return (pass | !fail);
 }

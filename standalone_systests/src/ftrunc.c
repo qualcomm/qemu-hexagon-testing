@@ -15,12 +15,12 @@
 
 
 
-int main() {
+int main(int argc, char **argv) {
 
   size_t rc;
   int fp;
   struct stat st;
-  char *fname = {"_testfile_ftrunc"};
+  char *fname = argv[1];
 
   memset(&st, 0, sizeof(struct stat));
   if ((rc = stat(fname, &st)) != 0) {
