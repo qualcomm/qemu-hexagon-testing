@@ -12,7 +12,6 @@
 #include <sys/stat.h>
 #include <errno.h>
 #include <unistd.h>
-#include <dirent.h>
 #include "strutils.h"
 
 /* Defines in order of testing */
@@ -42,11 +41,6 @@
 /* Time */
 #define HEX_SYS_CLOCK           0x10
 #define HEX_SYS_TIME            0x11
-
-/* dirent */
-#define HEX_SYS_OPENDIR         0x180
-#define HEX_SYS_CLOSEDIR        0x181
-#define HEX_SYS_READDIR         0x182
 
 /* STDOUT */
 #define HEX_SYS_WRITEC          0x03
@@ -235,36 +229,6 @@ int main(int argc, char **argv)
     assert(ret);
     SWI(HEX_SYS_CLOCK);
     assert(ret);
-
-    /* OPENDIR */
-    char *dname = argv[1];
-    DIRECT_SWI(HEX_SYS_OPENDIR, dname);
-    assert(ret);
-    int dir_index = ret;
-
-    /* READDIR */
-    char *expected_files[4] = { ".", "..", "fileA", "fileB" };
-    char found_files_buffer[4][256];
-    char *found_files[4];
-    for (int i = 0; 1; i++) {
-        struct __attribute__((__packed__)) { int32_t _; char d_name[256]; } dirent;
-        DIRECT_SWI(HEX_SYS_READDIR, dir_index, &dirent);
-        if (!ret) {
-            break;
-        }
-        assert(i < 4);
-        found_files[i] = found_files_buffer[i];
-        strcpy(found_files[i], dirent.d_name);
-    }
-
-    sort_str_arr(found_files, 4);
-    for (int i = 0; i < 4; i++) {
-        assert(!strcmp(found_files[i], expected_files[i]));
-    }
-
-    /* CLOSEDIR */
-    DIRECT_SWI(HEX_SYS_CLOSEDIR, dir_index);
-    assert(!ret);
 
     /* WRITEC, WRITECREG, WRITE0 */
     /* We use DO_SWI directly here to bypass the args array */

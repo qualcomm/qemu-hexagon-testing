@@ -21,6 +21,55 @@
 
 #define MAX 10
 
+#define HEX_SYS_OPENDIR         0x180
+#define HEX_SYS_CLOSEDIR        0x181
+#define HEX_SYS_READDIR         0x182
+
+#define DO_SWI(CODE, ARG0, ARG1, RET, ERR) \
+    do { \
+        asm volatile( \
+                "r0 = %2\n" \
+                "r1 = %3\n" \
+                "r2 = %4\n" \
+                "trap0(#0)\n" \
+                "%0 = r0\n" \
+                "%1 = r1\n" \
+                : "=r"(RET), "=r"(ERR) \
+                : "r"(CODE), "r"(ARG0), "r"(ARG1) \
+                : "r0", "r1", "r2", "memory" \
+                ); \
+    } while (0)
+
+static void cmp_with_direct_swi(const char *dname, char *expected_files[MAX])
+{
+    uint32_t dir_index, ret, err;
+    /* OPENDIR */
+    DO_SWI(HEX_SYS_OPENDIR, dname, 0, dir_index, err);
+    assert(dir_index);
+
+    /* READDIR */
+    char found_files_buffer[4][256];
+    char *found_files[4];
+    for (int i = 0; 1; i++) {
+        struct __attribute__((__packed__)) { int32_t _; char d_name[256]; } dirent;
+        DO_SWI(HEX_SYS_READDIR, dir_index, &dirent, ret, err);
+        if (!ret) {
+            break;
+        }
+        assert(i < 4);
+        found_files[i] = found_files_buffer[i];
+        strcpy(found_files[i], dirent.d_name);
+    }
+
+    sort_str_arr(found_files, 4);
+    for (int i = 0; i < 4; i++) {
+        assert(!strcmp(found_files[i], expected_files[i]));
+    }
+    /* CLOSEDIR */
+    DO_SWI(HEX_SYS_CLOSEDIR, dir_index, 0, ret, err);
+    assert(!ret);
+}
+
 int main(int argc, char **argv)
 {
     char *found_files[MAX];
@@ -56,6 +105,7 @@ int main(int argc, char **argv)
     }
 
     sort_str_arr(found_files, n);
+    cmp_with_direct_swi(argv[1], found_files);
     bool first = true;
     for (int i = 0; i < n; i++) {
         printf("%s%s", first ? "" : " ", found_files[i]);
