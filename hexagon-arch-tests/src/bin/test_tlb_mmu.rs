@@ -591,6 +591,12 @@ fn test_tlboc_incoming_global_no_bypass() {
 /// rather than merely zero-valued.
 const EMPTY_PPD_LO: u32 = 0xF700_0000;
 
+/// A lo word whose PPD field encodes the largest page size. The lowest set
+/// bit of lo[23:0] is bit 12, which is a perfectly legal encoding -- an entry
+/// carrying it spans the entire address space. Used to check that an entry is
+/// tested for validity before its span is ever consulted.
+const WIDEST_PAGE_LO: u32 = 0x0000_1000;
+
 /// tlboc against an entry whose PPD field carries no size marker.
 ///
 /// tlboc forces the valid bit on for the entry it is handed, so this exercises
@@ -617,6 +623,46 @@ fn test_tlboc_empty_ppd_is_not_giant_page() {
 
     // Clean up
     tlb_invalidate(OTHER_IDX);
+}
+
+/// The overlap scan must skip invalid entries before decoding their fields.
+///
+/// `test_ctlbw_ignores_invalid_entries` covers the all-zeroes case, which an
+/// implementation can special-case its way past. This parks a non-zero value
+/// with V=0 -- what a kernel leaves behind when it uses a spare TLB slot as
+/// scratch storage. The value is chosen so that, if its span were consulted,
+/// it would cover the whole address space and collide with everything.
+fn test_ctlbw_ignores_invalid_nonzero_entries() {
+    const GARBAGE_IDX: u32 = 56;
+    const NEW_IDX: u32 = 57;
+
+    // V=0 (bit 31 clear) but otherwise non-zero in both words.
+    let garbage_hi: u32 = 0x0001_2345;
+    tlb_write(garbage_hi, WIDEST_PAGE_LO, GARBAGE_IDX);
+    isync();
+
+    // Confirm the slot really does hold what we put there, so a later
+    // failure cannot be blamed on the write being dropped.
+    let (read_hi, read_lo) = tlb_read(GARBAGE_IDX);
+    check32!(read_hi, garbage_hi);
+    check32!(read_lo, WIDEST_PAGE_LO);
+
+    // A ctlbw for an unrelated VPN must ignore the invalid slot and succeed.
+    let new_hi = make_tlb_hi_vg(0x4E0, 0, true);
+    let new_lo = make_tlb_lo(0x4E0, TLB_PERM_XWRU, true);
+    let result = ctlbw(new_hi, new_lo, NEW_IDX);
+    isync();
+
+    check32!(result, 0x8000_0000);
+
+    // And the entry should actually have landed.
+    let (written_hi, written_lo) = tlb_read(NEW_IDX);
+    check32!(written_hi, new_hi);
+    check32!(written_lo, new_lo);
+
+    // Clean up
+    tlb_invalidate(GARBAGE_IDX);
+    tlb_invalidate(NEW_IDX);
 }
 
 // ---------------------------------------------------------------------------
@@ -833,6 +879,10 @@ pub extern "C" fn rust_main() -> i32 {
     run_test(
         "tlboc_empty_ppd_is_not_giant_page",
         test_tlboc_empty_ppd_is_not_giant_page,
+    );
+    run_test(
+        "ctlbw_ignores_invalid_nonzero_entries",
+        test_ctlbw_ignores_invalid_nonzero_entries,
     );
 
     // Overlap resolution tests — assert multi-TLB-match NMI fires
