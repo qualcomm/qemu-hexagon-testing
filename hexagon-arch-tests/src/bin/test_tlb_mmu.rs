@@ -665,6 +665,39 @@ fn test_ctlbw_ignores_invalid_nonzero_entries() {
     tlb_invalidate(NEW_IDX);
 }
 
+/// Bit 27 of the lo word does not select extended addressing for a JTLB entry.
+///
+/// Extended (HSV39) addressing belongs to the DMA TLB. In an ordinary JTLB
+/// entry bit 27 is part of the cache-attribute field, so setting it must not
+/// change how the entry's VPN is interpreted: the entry still describes
+/// VA = VPN << 12, and a probe for that VA must find it.
+fn test_tlb_bit27_does_not_relocate_jtlb_entry() {
+    const IDX: u32 = 58;
+    const VPN_1M: u32 = 0x4F0;
+
+    let hi = make_tlb_hi_vg(VPN_1M, 0, true);
+    // Same entry the other tests build, plus bit 27.
+    let lo = make_tlb_lo(VPN_1M, TLB_PERM_XWRU, true) | (1 << 27);
+
+    tlb_write(hi, lo, IDX);
+    isync();
+
+    // Round-trips unchanged.
+    let (read_hi, read_lo) = tlb_read(IDX);
+    check32!(read_hi, hi);
+    check32!(read_lo, lo);
+
+    // tlbp takes the hi word; VA comes from the same VPN field as always.
+    // An implementation that reads bit 27 as an addressing-mode selector
+    // places this entry at VPN << 20 instead and the probe misses.
+    let result = tlb_probe(hi);
+    check!(result >= 0);
+    check32!(result as u32, IDX);
+
+    // Clean up
+    tlb_invalidate(IDX);
+}
+
 // ---------------------------------------------------------------------------
 // Helper: make 4MB TLB entries
 // ---------------------------------------------------------------------------
@@ -883,6 +916,10 @@ pub extern "C" fn rust_main() -> i32 {
     run_test(
         "ctlbw_ignores_invalid_nonzero_entries",
         test_ctlbw_ignores_invalid_nonzero_entries,
+    );
+    run_test(
+        "tlb_bit27_does_not_relocate_jtlb_entry",
+        test_tlb_bit27_does_not_relocate_jtlb_entry,
     );
 
     // Overlap resolution tests — assert multi-TLB-match NMI fires
