@@ -573,6 +573,53 @@ fn test_tlboc_incoming_global_no_bypass() {
 }
 
 // ---------------------------------------------------------------------------
+// Page-size field decoding
+//
+// The page size of an entry is encoded as the position of the lowest set bit
+// of the PPD field -- lo[23:0]. Only that field participates: the bits above
+// it (cache attributes, permissions) and the whole hi word belong to other
+// fields. An implementation that scans the entire 64-bit entry instead will
+// decode a nonsense size whenever the PPD field is empty, and a decoder that
+// then trusts the result produces a page large enough to overlap everything.
+//
+// These entries deliberately have an empty PPD field, which is the shape a
+// kernel produces when it parks a bookkeeping value in an unused TLB slot.
+// ---------------------------------------------------------------------------
+
+/// A non-zero value with an empty PPD field, i.e. no page-size marker at all.
+/// Bits are set only above lo[23:0] so the size field is genuinely empty
+/// rather than merely zero-valued.
+const EMPTY_PPD_LO: u32 = 0xF700_0000;
+
+/// tlboc against an entry whose PPD field carries no size marker.
+///
+/// tlboc forces the valid bit on for the entry it is handed, so this exercises
+/// the size decode on the incoming (probe) side. With an empty PPD the entry
+/// covers one small page at its own VPN; it must not be treated as spanning
+/// the address space and colliding with unrelated mappings.
+fn test_tlboc_empty_ppd_is_not_giant_page() {
+    const OTHER_IDX: u32 = 56;
+
+    // A valid, unrelated mapping somewhere else in the address space. A
+    // wrongly-inflated probe page would swallow this and report an overlap.
+    let other_hi = make_tlb_hi_vg(0x4C0, 0, true);
+    let other_lo = make_tlb_lo(0x4C0, TLB_PERM_XWRU, true);
+    tlb_write(other_hi, other_lo, OTHER_IDX);
+    isync();
+
+    // Probe an unmapped VPN with no size marker in the PPD field.
+    let check_hi = make_tlb_hi_vg(0x4D0, 0, true);
+    let result = tlboc(check_hi, EMPTY_PPD_LO);
+
+    // Distinct VPN, so no overlap regardless of how the empty size decodes
+    // -- unless the entry has been inflated into a huge page.
+    check32!(result, 0x8000_0000);
+
+    // Clean up
+    tlb_invalidate(OTHER_IDX);
+}
+
+// ---------------------------------------------------------------------------
 // Helper: make 4MB TLB entries
 // ---------------------------------------------------------------------------
 
@@ -781,6 +828,12 @@ pub extern "C" fn rust_main() -> i32 {
     run_test("tlboc_no_overlap_different_page_sizes", test_tlboc_no_overlap_different_page_sizes);
     run_test("ctlbw_ignores_invalid_entries", test_ctlbw_ignores_invalid_entries);
     run_test("tlboc_incoming_global_no_bypass", test_tlboc_incoming_global_no_bypass);
+
+    // Page-size field decoding
+    run_test(
+        "tlboc_empty_ppd_is_not_giant_page",
+        test_tlboc_empty_ppd_is_not_giant_page,
+    );
 
     // Overlap resolution tests — assert multi-TLB-match NMI fires
     run_test("overlap_load_raises_nmi", test_overlap_load_raises_nmi);
