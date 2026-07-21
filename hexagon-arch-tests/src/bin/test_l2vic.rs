@@ -30,23 +30,54 @@ const L2VIC_L1_INTNO: u32 = 2;
 static HANDLER_VID: AtomicU32 = AtomicU32::new(0xFFFF_FFFF);
 static HANDLER_COUNT: AtomicU32 = AtomicU32::new(0);
 
+// State probed from inside the gating-test ISR, before crt0.S's automatic
+// post-return `ciad` clears the delivered interrupt.
+static GATE_STATUS_AFTER_A: AtomicU32 = AtomicU32::new(0xFFFF_FFFF);
+static GATE_STATUS_AFTER_B_RAISE: AtomicU32 = AtomicU32::new(0xFFFF_FFFF);
+static GATE_STATUS_AFTER_VID_WRITE: AtomicU32 = AtomicU32::new(0xFFFF_FFFF);
+
 // L2VIC state
-static mut L2VIC_VA: u32 = 0;
+static L2VIC_VA: AtomicU32 = AtomicU32::new(0);
 
 /// Interrupt handler for L1 INT#2: reads VID and stores VID0 field.
 extern "C" fn l2vic_int_handler(_intno: u32) {
-    let vid = read_vid();
-    // VID0 is bits [9:0] — the L2 interrupt vector number
-    HANDLER_VID.store(vid & 0x3FF, Ordering::SeqCst);
+    let l2_irq = read_vid0();
+    HANDLER_VID.store(l2_irq, Ordering::SeqCst);
     HANDLER_COUNT.fetch_add(1, Ordering::SeqCst);
 
     // Clear the L2VIC interrupt that fired
-    let l2_irq = vid & 0x3FF;
     let slice = l2_irq / 32;
     let bit = l2_irq % 32;
-    let base = unsafe { L2VIC_VA };
+    let base = L2VIC_VA.load(Ordering::SeqCst);
     if base != 0 {
         l2vic_write(base, L2VIC_INT_CLEAR + 4 * slice, 1 << bit);
+    }
+}
+
+/// Gating-test ISR. On the first delivery (irq_a, still active — crt0.S's
+/// post-ISR `ciad` hasn't cleared it yet), snapshots INT_STATUS after raising
+/// irq_b and after a raw VID write, to prove neither bypasses delivery gating.
+extern "C" fn l2vic_gating_test_isr(_intno: u32) {
+    HANDLER_VID.store(read_vid0(), Ordering::SeqCst);
+    let prev_count = HANDLER_COUNT.fetch_add(1, Ordering::SeqCst);
+
+    if prev_count == 0 {
+        let irq_a: u32 = 5;
+        let irq_b: u32 = 6;
+        let base = L2VIC_VA.load(Ordering::SeqCst);
+
+        GATE_STATUS_AFTER_A.store(l2vic_read(base, L2VIC_INT_STATUS), Ordering::SeqCst);
+
+        l2vic_write(base, L2VIC_SOFT_INT, 1 << irq_b);
+        GATE_STATUS_AFTER_B_RAISE.store(l2vic_read(base, L2VIC_INT_STATUS), Ordering::SeqCst);
+
+        write_vid(0);
+        isync();
+        GATE_STATUS_AFTER_VID_WRITE.store(l2vic_read(base, L2VIC_INT_STATUS), Ordering::SeqCst);
+
+        // Restore VID0 = irq_a before returning.
+        write_vid(irq_a);
+        isync();
     }
 }
 
@@ -63,9 +94,7 @@ fn setup_l2vic() -> u32 {
     let vpn_1m = l2vic_base >> 20;
     install_device_mapping(vpn_1m, vpn_1m, L2VIC_TLB_IDX);
 
-    unsafe {
-        L2VIC_VA = l2vic_base;
-    }
+    L2VIC_VA.store(l2vic_base, Ordering::SeqCst);
     l2vic_base
 }
 
@@ -97,9 +126,7 @@ fn l2vic_probe(base: u32) {
 
 fn cleanup_l2vic() {
     tlb_invalidate(L2VIC_TLB_IDX);
-    unsafe {
-        L2VIC_VA = 0;
-    }
+    L2VIC_VA.store(0, Ordering::SeqCst);
 }
 
 fn l2vic_clear_irq(base: u32, l2_irq: u32) {
@@ -123,7 +150,7 @@ fn clear_l1_int2() {
 
 /// Enable an L2 IRQ via INT_ENABLE_SET, read back, disable via CLR, verify.
 fn test_l2vic_enable_readback() {
-    let base = unsafe { L2VIC_VA };
+    let base = L2VIC_VA.load(Ordering::SeqCst);
     let l2_irq: u32 = 5;
     let slice = l2_irq / 32;
     let bit = l2_irq % 32;
@@ -144,7 +171,7 @@ fn test_l2vic_enable_readback() {
 /// Set INT_TYPE bit for an IRQ (edge-triggered), read back.
 /// This test always runs — INT_TYPE works even on hexagon-sim.
 fn test_l2vic_type_readback() {
-    let base = unsafe { L2VIC_VA };
+    let base = L2VIC_VA.load(Ordering::SeqCst);
     let l2_irq: u32 = 5;
     let slice = l2_irq / 32;
     let bit = l2_irq % 32;
@@ -167,7 +194,7 @@ fn test_l2vic_type_readback() {
 /// gracefully. On QEMU (which models the full L2VIC), this test verifies the
 /// pending state is observable while delivery is blocked.
 fn test_l2vic_soft_int_pending() {
-    let base = unsafe { L2VIC_VA };
+    let base = L2VIC_VA.load(Ordering::SeqCst);
     let l2_irq: u32 = 7;
     let slice = l2_irq / 32;
     let bit = l2_irq % 32;
@@ -205,7 +232,7 @@ fn test_l2vic_soft_int_pending() {
 
 /// VID capture — trigger L2 IRQ 5, verify VID0 == 5 in handler.
 fn test_l2vic_vid_capture() {
-    let base = unsafe { L2VIC_VA };
+    let base = L2VIC_VA.load(Ordering::SeqCst);
     let l2_irq: u32 = 5;
     let slice = l2_irq / 32;
     let bit = l2_irq % 32;
@@ -236,7 +263,7 @@ fn test_l2vic_vid_capture() {
 
 /// Trigger different L2 IRQs (5, 33, 100), verify each produces correct VID0.
 fn test_l2vic_vid_multiple_vectors() {
-    let base = unsafe { L2VIC_VA };
+    let base = L2VIC_VA.load(Ordering::SeqCst);
     let irqs: [u32; 3] = [5, 33, 100];
 
     let saved_imask = read_imask();
@@ -276,10 +303,105 @@ fn test_l2vic_vid_multiple_vectors() {
     write_imask(saved_imask);
 }
 
+/// Writing the VID fields unpacks them into the L2VIC per-group VID registers.
+fn test_l2vic_vid_write_updates_vid_groups() {
+    let base = L2VIC_VA.load(Ordering::SeqCst);
+    let saved_vid = read_vid();
+
+    write_vid0(0x11);
+    write_vid1(0x22);
+
+    check32!(read_vid0(), 0x11);
+    check32!(read_vid1(), 0x22);
+    // Each group register holds one unpacked VID field.
+    check32!(l2vic_read(base, L2VIC_VID_GRP_0), 0x11);
+    check32!(l2vic_read(base, L2VIC_VID_GRP_1), 0x22);
+
+    write_vid(saved_vid);
+    isync();
+}
+
+/// Same, for the VID1 sreg's VID2/VID3 fields → L2VIC_VID_GRP_2/3.
+fn test_l2vic_vid1_write_updates_vid_groups() {
+    let base = L2VIC_VA.load(Ordering::SeqCst);
+    let saved_vid1 = read_vid1_sreg();
+
+    write_vid2(0x33);
+    write_vid3(0x44);
+
+    check32!(read_vid2(), 0x33);
+    check32!(read_vid3(), 0x44);
+    check32!(l2vic_read(base, L2VIC_VID_GRP_2), 0x33);
+    check32!(l2vic_read(base, L2VIC_VID_GRP_3), 0x44);
+
+    write_vid1_sreg(saved_vid1);
+    isync();
+}
+
+/// A software write to VID must not bypass L2VIC delivery gating: while irq_a
+/// is active in the ISR, neither raising irq_b nor a raw VID write may deliver
+/// irq_b. It arrives only after crt0.S's `ciad` clears irq_a on ISR return,
+/// seen as a second ISR call with VID0 == irq_b.
+fn test_l2vic_vid_write_does_not_bypass_delivery_gating() {
+    let base = L2VIC_VA.load(Ordering::SeqCst);
+    let irq_a: u32 = 5;
+    let irq_b: u32 = 6;
+    let slice = irq_a / 32; // irq_a and irq_b share a slice (both < 32)
+
+    HANDLER_VID.store(0xFFFF_FFFF, Ordering::SeqCst);
+    HANDLER_COUNT.store(0, Ordering::SeqCst);
+    GATE_STATUS_AFTER_A.store(0xFFFF_FFFF, Ordering::SeqCst);
+    GATE_STATUS_AFTER_B_RAISE.store(0xFFFF_FFFF, Ordering::SeqCst);
+    GATE_STATUS_AFTER_VID_WRITE.store(0xFFFF_FFFF, Ordering::SeqCst);
+
+    let saved_imask = read_imask();
+    write_imask(saved_imask & !(1 << L2VIC_L1_INTNO));
+    register_interrupt(L2VIC_L1_INTNO, l2vic_gating_test_isr);
+
+    let saved_type = l2vic_read(base, L2VIC_INT_TYPE + 4 * slice);
+    // Edge-triggered: L2VIC_SOFT_INTn only sets INT_PENDING for
+    // edge-triggered interrupts
+    l2vic_write(
+        base,
+        L2VIC_INT_TYPE + 4 * slice,
+        saved_type | (1 << irq_a) | (1 << irq_b),
+    );
+    l2vic_write(
+        base,
+        L2VIC_INT_ENABLE_SET + 4 * slice,
+        (1 << irq_a) | (1 << irq_b),
+    );
+    busy_loop(10);
+
+    l2vic_write(base, L2VIC_SOFT_INT + 4 * slice, 1 << irq_a);
+    busy_loop(300);
+
+    // Both irq_a and (after crt0.S's auto-`ciad` unblocked it) irq_b were
+    // delivered, in that order.
+    check32!(HANDLER_COUNT.load(Ordering::SeqCst), 2);
+    check32!(HANDLER_VID.load(Ordering::SeqCst), irq_b);
+
+    let status_after_a = GATE_STATUS_AFTER_A.load(Ordering::SeqCst);
+    check!(status_after_a & (1 << irq_a) != 0);
+
+    let status_after_b_raise = GATE_STATUS_AFTER_B_RAISE.load(Ordering::SeqCst);
+    check!(status_after_b_raise & (1 << irq_b) == 0);
+    check32!(status_after_b_raise, status_after_a);
+
+    let status_after_vid_write = GATE_STATUS_AFTER_VID_WRITE.load(Ordering::SeqCst);
+    check32!(status_after_vid_write, status_after_b_raise);
+
+    l2vic_clear_irq(base, irq_a);
+    l2vic_clear_irq(base, irq_b);
+    l2vic_write(base, L2VIC_INT_TYPE + 4 * slice, saved_type);
+    write_imask(saved_imask);
+    clear_l1_int2();
+}
+
 /// Fast L2VIC interface — enable/disable IRQs via fast interface,
 /// verify state via standard INT_ENABLE reads.
 fn test_l2vic_fast_interface() {
-    let base = unsafe { L2VIC_VA };
+    let base = L2VIC_VA.load(Ordering::SeqCst);
     let fast_raw = read_cfgtable_field(0x28);
     if fast_raw == 0 {
         panic!("FATAL: fast L2VIC base is 0 in config table");
@@ -333,6 +455,18 @@ pub extern "C" fn rust_main() -> i32 {
     run_test(
         "l2vic_vid_multiple_vectors",
         test_l2vic_vid_multiple_vectors,
+    );
+    run_test(
+        "l2vic_vid_write_updates_vid_groups",
+        test_l2vic_vid_write_updates_vid_groups,
+    );
+    run_test(
+        "l2vic_vid1_write_updates_vid_groups",
+        test_l2vic_vid1_write_updates_vid_groups,
+    );
+    run_test(
+        "l2vic_vid_write_does_not_bypass_delivery_gating",
+        test_l2vic_vid_write_does_not_bypass_delivery_gating,
     );
     run_test("l2vic_fast_interface", test_l2vic_fast_interface);
 

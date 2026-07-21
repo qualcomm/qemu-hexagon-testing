@@ -93,6 +93,10 @@ pub const QTIMER_EXPECTED_VERSION: u32 = 0x2002_0000;
 // ---------------------------------------------------------------------------
 // L2VIC register offsets (from l2vic.h)
 // ---------------------------------------------------------------------------
+pub const L2VIC_VID_GRP_0: u32 = 0x0;
+pub const L2VIC_VID_GRP_1: u32 = 0x4;
+pub const L2VIC_VID_GRP_2: u32 = 0x8;
+pub const L2VIC_VID_GRP_3: u32 = 0xC;
 pub const L2VIC_INT_ENABLE: u32 = 0x100;
 pub const L2VIC_INT_ENABLE_CLR: u32 = 0x180;
 pub const L2VIC_INT_ENABLE_SET: u32 = 0x200;
@@ -496,6 +500,69 @@ pub fn write_vid(val: u32) {
     unsafe {
         asm!("vid = {0}", in(reg) val, options(nostack));
     }
+}
+
+#[inline(always)]
+pub fn read_vid1_sreg() -> u32 {
+    let val: u32;
+    unsafe {
+        asm!("{0} = s22", out(reg) val, options(nomem, nostack));
+    }
+    val
+}
+
+#[inline(always)]
+pub fn write_vid1_sreg(val: u32) {
+    unsafe {
+        asm!("s22 = {0}", in(reg) val, options(nostack));
+    }
+}
+
+// VID field accessors.  Each VIDn is a 10-bit L2 vector number.  The four
+// fields are packed two per sreg: VID = {VID1[25:16], VID0[9:0]}, VID1 =
+// {VID3[25:16], VID2[9:0]}.  Field writers isync since a subsequent VID read
+// is otherwise undefined (spec 3.1.2.5).
+pub const VID_FIELD_MASK: u32 = 0x3FF;
+const VID_HI_SHIFT: u32 = 16;
+
+#[inline(always)]
+pub fn read_vid0() -> u32 {
+    read_vid() & VID_FIELD_MASK
+}
+#[inline(always)]
+pub fn read_vid1() -> u32 {
+    (read_vid() >> VID_HI_SHIFT) & VID_FIELD_MASK
+}
+#[inline(always)]
+pub fn read_vid2() -> u32 {
+    read_vid1_sreg() & VID_FIELD_MASK
+}
+#[inline(always)]
+pub fn read_vid3() -> u32 {
+    (read_vid1_sreg() >> VID_HI_SHIFT) & VID_FIELD_MASK
+}
+
+#[inline(always)]
+pub fn write_vid0(val: u32) {
+    write_vid((read_vid() & !VID_FIELD_MASK) | (val & VID_FIELD_MASK));
+    isync();
+}
+#[inline(always)]
+pub fn write_vid1(val: u32) {
+    let hi = (val & VID_FIELD_MASK) << VID_HI_SHIFT;
+    write_vid((read_vid() & !(VID_FIELD_MASK << VID_HI_SHIFT)) | hi);
+    isync();
+}
+#[inline(always)]
+pub fn write_vid2(val: u32) {
+    write_vid1_sreg((read_vid1_sreg() & !VID_FIELD_MASK) | (val & VID_FIELD_MASK));
+    isync();
+}
+#[inline(always)]
+pub fn write_vid3(val: u32) {
+    let hi = (val & VID_FIELD_MASK) << VID_HI_SHIFT;
+    write_vid1_sreg((read_vid1_sreg() & !(VID_FIELD_MASK << VID_HI_SHIFT)) | hi);
+    isync();
 }
 
 #[inline(always)]

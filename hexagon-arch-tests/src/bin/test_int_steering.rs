@@ -45,7 +45,7 @@ static T2_DESIRED_PRIO: AtomicU32 = AtomicU32::new(0);
 static T1_CLEAR_IE: AtomicU32 = AtomicU32::new(0);
 
 // L2VIC state
-static mut L2VIC_VA: u32 = 0;
+static L2VIC_VA: AtomicU32 = AtomicU32::new(0);
 
 // -----------------------------------------------------------------------
 // Handlers
@@ -62,11 +62,10 @@ extern "C" fn l2vic_handler(_intno: u32) {
     HANDLER_HTID.store(read_htid(), Ordering::SeqCst);
     HANDLER_COUNT.fetch_add(1, Ordering::SeqCst);
 
-    let vid = read_vid();
-    let l2_irq = vid & 0x3FF;
+    let l2_irq = read_vid0();
     let slice = l2_irq / 32;
     let bit = l2_irq % 32;
-    let base = unsafe { L2VIC_VA };
+    let base = L2VIC_VA.load(Ordering::SeqCst);
     if base != 0 {
         l2vic_write(base, L2VIC_INT_CLEAR + 4 * slice, 1 << bit);
     }
@@ -170,7 +169,7 @@ fn reset_handler_state() {
 
 /// Clear L2VIC + L1 INT#2 state between tests.
 fn clear_l2vic_state() {
-    let base = unsafe { L2VIC_VA };
+    let base = L2VIC_VA.load(Ordering::SeqCst);
     if base != 0 {
         let slice = TEST_L2_IRQ / 32;
         let bit = TEST_L2_IRQ % 32;
@@ -187,7 +186,7 @@ fn clear_l2vic_state() {
 
 /// Trigger L2VIC SOFT_INT for TEST_L2_IRQ and wait for delivery.
 fn trigger_l2vic_and_wait() {
-    let base = unsafe { L2VIC_VA };
+    let base = L2VIC_VA.load(Ordering::SeqCst);
     let slice = TEST_L2_IRQ / 32;
     let bit = TEST_L2_IRQ % 32;
 
@@ -222,9 +221,7 @@ fn setup_l2vic() {
     let l2vic_base = subsys_base + 0x0001_0000;
     let vpn_1m = l2vic_base >> 20;
     install_device_mapping(vpn_1m, vpn_1m, L2VIC_TLB_IDX);
-    unsafe {
-        L2VIC_VA = l2vic_base;
-    }
+    L2VIC_VA.store(l2vic_base, Ordering::SeqCst);
 
     // Probe: check SET and CLR both work
     l2vic_write(l2vic_base, L2VIC_INT_ENABLE_CLR, 1 << 0);
@@ -259,16 +256,14 @@ fn setup_l2vic() {
 }
 
 fn cleanup_l2vic() {
-    let base = unsafe { L2VIC_VA };
+    let base = L2VIC_VA.load(Ordering::SeqCst);
     if base != 0 {
         let slice = TEST_L2_IRQ / 32;
         let bit = TEST_L2_IRQ % 32;
         l2vic_write(base, L2VIC_INT_ENABLE_CLR + 4 * slice, 1 << bit);
     }
     tlb_invalidate(L2VIC_TLB_IDX);
-    unsafe {
-        L2VIC_VA = 0;
-    }
+    L2VIC_VA.store(0, Ordering::SeqCst);
 }
 
 // -----------------------------------------------------------------------
