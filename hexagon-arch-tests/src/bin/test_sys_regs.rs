@@ -47,12 +47,36 @@ fn test_syscfg() {
 }
 
 /// Read/write IMASK: write pattern, read back, verify match, then restore.
+///
+/// IMASK's full-register writability depends on the ISA version (read from
+/// REV[7:0]):
+///   - Prior to v65: unsupported, rejected outright.
+///   - v65 through v80: bits 31:16 are architecturally read-only, so a
+///     write only affects bits 15:0.
+///   - v81 and later: all 32 bits are read/write.
 fn test_imask_readwrite() {
+    let isa = isa_version();
+    if isa < ISA_V65 {
+        println!(
+            "FAIL: ISA version 0x{:02x} is older than v65 (0x{:02x}); \
+             imask_readwrite is unsupported on this target",
+            isa, ISA_V65
+        );
+        record_error();
+        return;
+    }
+
     let saved = read_imask();
     let pattern: u32 = 0xAAAA_0000;
     write_imask(pattern);
     let readback = read_imask();
-    check32!(readback, pattern);
+    if isa >= ISA_V81 {
+        // v81+: IMASK bits 31:0 are all read/write.
+        check32!(readback, pattern);
+    } else {
+        // v65..v80: bits 31:16 are read-only and ignore writes.
+        check32!(readback, pattern & 0x0000_FFFF);
+    }
     // Restore
     write_imask(saved);
 }

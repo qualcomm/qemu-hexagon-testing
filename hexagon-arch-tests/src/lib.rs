@@ -104,6 +104,15 @@ pub const CCR_GRE: u32 = 1 << CCR_GRE_BIT;
 pub const CCR_VV1: u32 = 1 << CCR_VV1_BIT;
 
 // ---------------------------------------------------------------------------
+// REV register / ISA version
+// ---------------------------------------------------------------------------
+// REV[7:0] holds the ISA version byte, encoded so that architecture vNN
+// reads back as the literal byte 0xNN (e.g. v81 -> 0x81, v68 -> 0x68).
+pub const REV_ISA_MASK: u32 = 0xFF;
+pub const ISA_V65: u32 = 0x65;
+pub const ISA_V81: u32 = 0x81;
+
+// ---------------------------------------------------------------------------
 // Exception cause codes
 // ---------------------------------------------------------------------------
 pub const CAUSE_PRECISE_BUS_ERROR: u32 = 0x01;
@@ -534,6 +543,21 @@ pub fn read_cfgbase() -> u32 {
         asm!("{0} = cfgbase", out(reg) val, options(nomem, nostack));
     }
     val
+}
+
+#[inline(always)]
+pub fn read_rev() -> u32 {
+    let val: u32;
+    unsafe {
+        asm!("{0} = rev", out(reg) val, options(nomem, nostack));
+    }
+    val
+}
+
+/// Extract the ISA version byte (REV[7:0]) from the REV register.
+#[inline(always)]
+pub fn isa_version() -> u32 {
+    read_rev() & REV_ISA_MASK
 }
 
 // ---------------------------------------------------------------------------
