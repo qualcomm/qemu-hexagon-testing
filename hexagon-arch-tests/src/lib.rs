@@ -141,6 +141,11 @@ pub const CAUSE_PRIV_NO_UXEC: u32 = 0x14;
 pub const CAUSE_PRIV_INSN_IN_USER: u32 = 0x1B;
 pub const CAUSE_GUEST_INSN_IN_USER: u32 = 0x1A;
 pub const CAUSE_NO_COPROC_ENABLE: u32 = 0x16;
+/// Instruction fetch missed the TLB.
+pub const CAUSE_TLBMISSX_NORMAL: u32 = 0x60;
+/// A packet straddles a page boundary and the page it continues into has no
+/// translation.  ELR names the straddling packet, BADVA the missing page.
+pub const CAUSE_TLBMISSX_NEXTPAGE: u32 = 0x61;
 
 // ---------------------------------------------------------------------------
 // TLB entry helpers
@@ -160,6 +165,21 @@ pub fn make_tlb_hi(vpn_1m: u32, asid: u32, global: bool) -> u32 {
 pub fn make_tlb_lo(ppn_1m: u32, perm_bits: u32, cached: bool) -> u32 {
     let cache_attr: u32 = if cached { 0x07 } else { 0x04 };
     ((perm_bits & 0xF) << 28) | (cache_attr << 24) | ((ppn_1m & 0x7FFF) << 9) | 0x10
+}
+
+/// Build a TLB hi word for a 4KB page: V=1, G=1, VPN = `va >> 12` in [19:0].
+/// ASID sits in [26:20] and is left at 0, which the global bit makes moot.
+pub fn make_tlb_hi_4k(va: u32) -> u32 {
+    0xC000_0000 | (va >> 12)
+}
+
+/// Build a TLB lo word for a 4KB page.
+/// Format: [31:28]=XWRU perms, [26:24]=cache attr, [23:0]=PPD.  The page size
+/// is encoded by the lowest set bit of PPD, so bit 0 set selects 4KB and the
+/// physical page number is shifted up by one.
+pub fn make_tlb_lo_4k(pa: u32, perm_bits: u32, cached: bool) -> u32 {
+    let cache_attr: u32 = if cached { 0x07 } else { 0x04 };
+    ((perm_bits & 0xF) << 28) | (cache_attr << 24) | (((pa >> 12) << 1) & 0x00FF_FFFE) | 1
 }
 
 /// PTE permission bits (encoded in TLB lo word via ppn_field)
@@ -1119,6 +1139,33 @@ pub fn tlb_probe(va: u32) -> i32 {
 #[inline(always)]
 pub fn tlb_invalidate(idx: u32) {
     tlb_write(0, 0, idx);
+    isync();
+}
+
+// ---------------------------------------------------------------------------
+// Instruction TLB miss hook (dispatched from crt0.S)
+// ---------------------------------------------------------------------------
+
+extern "C" {
+    static mut __tlbmissx_hook: u32;
+}
+
+/// Take over instruction TLB misses.  While a hook is installed, crt0's
+/// default miss handler is bypassed and `handler` runs instead, on the
+/// interrupted thread's stack and with SSR.EX still set; crt0 issues the
+/// `rte` when it returns.
+///
+/// The handler is responsible for making forward progress -- if it returns
+/// without installing a translation for the faulting fetch, the same miss is
+/// taken again immediately.  It may read ELR/BADVA/SSR and write ELR to
+/// redirect the resumed thread.  Pass `None` to restore the default handler.
+pub fn set_tlbmissx_hook(handler: Option<extern "C" fn()>) {
+    unsafe {
+        core::ptr::write_volatile(
+            &raw mut __tlbmissx_hook,
+            handler.map_or(0, |f| f as *const () as u32),
+        );
+    }
     isync();
 }
 

@@ -469,7 +469,25 @@ coredump:
 	.global event_handle_tlbmissx
 	.type event_handle_tlbmissx, @function
 event_handle_tlbmissx:
+	/*
+	 * A test can take over instruction TLB misses by storing the address
+	 * of an "extern C" fn() in __tlbmissx_hook.  Probe for one using only
+	 * the exception stack, so that when no hook is installed the default
+	 * handler below runs with the interrupted state untouched.
+	 */
 	crswap (sp, sgp0)
+	memw (sp + #-4) = r0
+	r0 = p3:0
+	memw (sp + #-8) = r0
+	r0 = memw (##__tlbmissx_hook)
+	{
+		p0 = cmp.eq (r0, #0)
+		if (!p0.new) jump:nt .Ltlbmissx_hook
+	}
+	r0 = memw (sp + #-8)
+	p3:0 = r0
+	r0 = memw (sp + #-4)
+	/* Fall through: already swapped onto the exception stack. */
 	sp = add (sp, #-64)
 	{
 		memd (sp + #0) = r1:0
@@ -554,6 +572,91 @@ event_handle_tlbmissx:
 		sp = add (sp, #64)
 	}
 	crswap (sp, sgp0)
+	rte
+
+.Ltlbmissx_hook:
+	/*
+	 * Run the installed handler on the interrupted thread's stack with
+	 * SSR.EX still set, preserving everything the Hexagon C ABI lets a
+	 * called function clobber: r0-r15, r28, LR/FP, the predicates, and
+	 * the loop/modifier/user-status registers.  r16-r27 are callee-saved,
+	 * so the handler restores those itself.  ELR is deliberately left
+	 * alone: a handler may set it to redirect the resumed thread.
+	 */
+	r0 = memw (sp + #-8)
+	p3:0 = r0
+	r0 = memw (sp + #-4)
+	crswap (sp, sgp0)
+	allocframe (#112)
+	{
+		memd (sp + #0) = r1:0
+		memd (sp + #8) = r3:2
+	}
+	{
+		memd (sp + #16) = r5:4
+		memd (sp + #24) = r7:6
+	}
+	{
+		memd (sp + #32) = r9:8
+		memd (sp + #40) = r11:10
+	}
+	{
+		memd (sp + #48) = r13:12
+		memd (sp + #56) = r15:14
+	}
+	r0 = p3:0
+	r1 = usr
+	r2 = sa0
+	r3 = lc0
+	r4 = sa1
+	r5 = lc1
+	r7:6 = c7:6                /* M0, M1 */
+	{
+		memd (sp + #64) = r1:0
+		memd (sp + #72) = r3:2
+	}
+	{
+		memd (sp + #80) = r5:4
+		memd (sp + #88) = r7:6
+	}
+	memw (sp + #96) = r28
+
+	r0 = memw (##__tlbmissx_hook)
+	callr r0
+
+	r28 = memw (sp + #96)
+	{
+		r1:0 = memd (sp + #64)
+		r3:2 = memd (sp + #72)
+	}
+	{
+		r5:4 = memd (sp + #80)
+		r7:6 = memd (sp + #88)
+	}
+	p3:0 = r0
+	usr = r1
+	sa0 = r2
+	lc0 = r3
+	sa1 = r4
+	lc1 = r5
+	c7:6 = r7:6
+	{
+		r1:0 = memd (sp + #0)
+		r3:2 = memd (sp + #8)
+	}
+	{
+		r5:4 = memd (sp + #16)
+		r7:6 = memd (sp + #24)
+	}
+	{
+		r9:8 = memd (sp + #32)
+		r11:10 = memd (sp + #40)
+	}
+	{
+		r13:12 = memd (sp + #48)
+		r15:14 = memd (sp + #56)
+	}
+	deallocframe
 	rte
 	.size event_handle_tlbmissx, . - event_handle_tlbmissx
 
@@ -985,6 +1088,15 @@ tlb_idx:
 	.global _tlb_fixed_entries
 _tlb_fixed_entries:
 	.word TLB_FIXED_ENTRIES
+
+	/*
+	 * Optional test-supplied instruction TLB miss handler.  Zero selects
+	 * the default handler above.
+	 */
+	.global __tlbmissx_hook
+	.p2align 2
+__tlbmissx_hook:
+	.word 0
 
 _l2cfg:
 	.word 0
