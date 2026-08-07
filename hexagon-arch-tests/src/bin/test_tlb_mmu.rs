@@ -881,6 +881,80 @@ fn test_overlap_resolution_lowest_index_reversed() {
     tlb_invalidate(HIGH_IDX);
 }
 
+/// Page-size field decode: the size is encoded by the least-significant set
+/// bit of PPD[9:0] (entry bits 9:0).  Bits above that field hold the
+/// cacheability and permission bits and must not take part in the decode.
+///
+/// Probing entries whose PPD[9:0] is zero used to abort QEMU: the decode ran
+/// ctz64() over the whole 64-bit entry, so the first set bit found was the
+/// cacheability field at bit 24, producing an out-of-range page-size index.
+/// Per get_pgsize() in the reference simulator, an all-zero field means the
+/// smallest page (4KB), not an error.
+fn test_tlb_pgsize_field_decode() {
+    // PPD[9:0] == 0, with the cacheability field (bits 27:24) set.  This is
+    // the entry that used to trip the assertion.
+    let lo_zero_size: u32 = 0x0100_0000; // C=0001, PPN=0, size field 0
+    let hi = make_tlb_hi(0x1A0, 0, true);
+
+    tlb_write(hi, lo_zero_size, TEST_TLB_IDX);
+    isync();
+
+    // Must read back verbatim -- the entry is stored, not reinterpreted.
+    let (rh, rl) = tlb_read(TEST_TLB_IDX);
+    check32!(rh, hi);
+    check32!(rl, lo_zero_size);
+
+    // Probing must terminate and report a sane result rather than aborting.
+    // The entry is valid and global, so it should be found at our index.
+    let result = tlb_probe(hi);
+    check32!(result as u32, TEST_TLB_IDX);
+
+    tlb_invalidate(TEST_TLB_IDX);
+
+    // Bit 10 is one past the top of the size field, so it must be ignored by
+    // the decode and treated as a 4KB page rather than a too-large size.
+    let lo_bit10: u32 = 0x0100_0400;
+    tlb_write(hi, lo_bit10, TEST_TLB_IDX);
+    isync();
+
+    let (rh2, rl2) = tlb_read(TEST_TLB_IDX);
+    check32!(rh2, hi);
+    check32!(rl2, lo_bit10);
+
+    let result2 = tlb_probe(hi);
+    check32!(result2 as u32, TEST_TLB_IDX);
+
+    tlb_invalidate(TEST_TLB_IDX);
+}
+
+/// Each page-size encoding in PPD[9:0] must probe successfully.  Walks the
+/// full 4KB..1GB range that HSV32 supports.
+fn test_tlb_pgsize_all_encodings() {
+    // Bit i of the size field selects page size 4KB * 4^i, so i in 0..=9
+    // covers 4KB through 1GB.
+    for i in 0..10 {
+        let size_bits: u32 = 1 << i;
+        // C=0111 (cacheable WB), PPN=0, size field = size_bits.
+        let lo: u32 = (0x7 << 24) | size_bits;
+        // Use a high VPN so large pages do not overlap the UART or the
+        // runtime's own fixed entries.
+        let hi = make_tlb_hi(0x800, 0, true);
+
+        tlb_write(hi, lo, TEST_TLB_IDX);
+        isync();
+
+        let (rh, rl) = tlb_read(TEST_TLB_IDX);
+        check32!(rh, hi);
+        check32!(rl, lo);
+
+        // Probe must find the entry for every legal size encoding.
+        let result = tlb_probe(hi);
+        check32!(result as u32, TEST_TLB_IDX);
+
+        tlb_invalidate(TEST_TLB_IDX);
+    }
+}
+
 #[no_mangle]
 pub extern "C" fn rust_main() -> i32 {
     test_suite_begin("TLB/MMU");
@@ -894,6 +968,8 @@ pub extern "C" fn rust_main() -> i32 {
     run_test("tlb_overwrite", test_tlb_overwrite);
     run_test("tlb_asid_match", test_tlb_asid_match);
     run_test("tlb_permissions", test_tlb_permissions);
+    run_test("tlb_pgsize_field_decode", test_tlb_pgsize_field_decode);
+    run_test("tlb_pgsize_all_encodings", test_tlb_pgsize_all_encodings);
 
     // Overlap detection tests
     run_test("tlboc_no_overlap", test_tlboc_no_overlap);
