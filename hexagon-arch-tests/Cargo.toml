@@ -47,6 +47,10 @@ name = "test_tlb_mmu"
 path = "src/bin/test_tlb_mmu.rs"
 
 [[bin]]
+name = "test_pagecross_tlbmissx"
+path = "src/bin/test_pagecross_tlbmissx.rs"
+
+[[bin]]
 name = "test_user_mode"
 path = "src/bin/test_user_mode.rs"
 
