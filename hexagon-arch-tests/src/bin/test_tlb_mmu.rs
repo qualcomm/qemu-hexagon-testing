@@ -883,11 +883,13 @@ fn test_overlap_resolution_lowest_index_reversed() {
 
 /// Page-size field decode: the size is encoded by the least-significant set
 /// bit of PPD[9:0] (entry bits 9:0).  Bits above that field hold the
-/// cacheability and permission bits and must not take part in the decode.
+/// physical page number, cacheability, and permission bits and must not
+/// take part in the decode.
 ///
 /// Probing entries whose PPD[9:0] is zero used to abort QEMU: the decode ran
-/// ctz64() over the whole 64-bit entry, so the first set bit found was the
-/// cacheability field at bit 24, producing an out-of-range page-size index.
+/// ctz64() over the whole 64-bit entry, so the first set bit found was
+/// whatever came next -- the cacheability field, an unrelated PPD bit, or
+/// even the VPN/ASID/valid bits -- producing an out-of-range page-size index.
 /// Per get_pgsize() in the reference simulator, an all-zero field means the
 /// smallest page (4KB), not an error.
 fn test_tlb_pgsize_field_decode() {
@@ -923,6 +925,26 @@ fn test_tlb_pgsize_field_decode() {
 
     let result2 = tlb_probe(hi);
     check32!(result2 as u32, TEST_TLB_IDX);
+
+    tlb_invalidate(TEST_TLB_IDX);
+
+    // PPD[23:10] is the real physical page number, not a synthetic test-only
+    // field like the cache attribute above -- so this is the case a fuzzer
+    // (e.g. the h2 hypervisor's TLB test, which writes random entries and
+    // reads them back per the commit that introduced this decode fix) is
+    // most likely to produce by chance: a nonzero physical page whose size
+    // field happens to be all zero. Bit 23 is the top of PPD, as far from
+    // the size field as PPD allows.
+    let lo_high_ppn: u32 = 0x0080_0000; // PPD[23] set, size field 0
+    tlb_write(hi, lo_high_ppn, TEST_TLB_IDX);
+    isync();
+
+    let (rh3, rl3) = tlb_read(TEST_TLB_IDX);
+    check32!(rh3, hi);
+    check32!(rl3, lo_high_ppn);
+
+    let result3 = tlb_probe(hi);
+    check32!(result3 as u32, TEST_TLB_IDX);
 
     tlb_invalidate(TEST_TLB_IDX);
 }
