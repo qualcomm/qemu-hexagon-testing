@@ -3,10 +3,17 @@
 
 //! HVX context management tests for Hexagon v81.
 //!
-//! Tests HVX presence detection, per-thread XE enable/disable, SSR.XA
-//! context assignment and readback, vector register isolation between
-//! threads using different HVX contexts, and exception on HVX access
-//! with SSR.XE=0.
+//! Tests HVX presence detection, SSR.XA assignment and readback, that
+//! distinct extension contexts hold distinct register files, that a
+//! context keeps its contents while another one is selected, that a
+//! context can be handed from one hardware thread to another, and the
+//! exception raised on HVX access with SSR.XE=0.
+//!
+//! The register-file checks read V0 back out of the architectural
+//! register file *after* changing SSR.XA, using explicit inline asm.
+//! Reading a buffer that was stored before the switch, or a vector the
+//! compiler happens to be holding, would pass even on an implementation
+//! that ignored SSR.XA altogether.
 
 #![no_std]
 #![no_main]
@@ -54,9 +61,85 @@ unsafe fn hvx_splat_store(buf: *mut HvxVector, val: u32) {
     core::ptr::write_volatile(buf, v);
 }
 
-// Shared state for multi-thread test.
+// -----------------------------------------------------------------------
+// V0 access through explicit inline asm
+// -----------------------------------------------------------------------
+//
+// These name V0 directly so the value under test lives in the
+// architectural register file, and therefore in whichever extension
+// context SSR.XA selects, rather than wherever the compiler would have
+// kept an HvxVector value.  Context selection, V0 access, and disabling
+// HVX are one asm block: separate blocks do not reserve V0 from register
+// allocation in intervening compiler-generated code.
+
+/// Scratch buffer for reading V0 back out.  Only ever written by
+/// v0_readback(), on one thread at a time.
+static mut V0_OUT: HvxBuf = HvxBuf::zeroed();
+
+/// Select `xa`, set V0, then disable HVX before returning to Rust.
+fn v0_splat(xa: u32, val: u32) {
+    let ssr = read_ssr();
+    let selected = (ssr & !SSR_XA_MASK) | SSR_XE
+        | ((xa << SSR_XA_SHIFT) & SSR_XA_MASK);
+    let disabled = ssr & !SSR_XE;
+    unsafe {
+        asm!(
+            "ssr = {selected}",
+            "isync",
+            "v0 = vsplat({val})",
+            "ssr = {disabled}",
+            "isync",
+            selected = in(reg) selected,
+            val = in(reg) val,
+            disabled = in(reg) disabled,
+            lateout("v0") _,
+            options(nostack),
+        );
+    }
+}
+
+/// Select `xa`, store V0, disable HVX, and return its first word.
+fn v0_readback(xa: u32) -> u32 {
+    let ssr = read_ssr();
+    let selected = (ssr & !SSR_XA_MASK) | SSR_XE
+        | ((xa << SSR_XA_SHIFT) & SSR_XA_MASK);
+    let disabled = ssr & !SSR_XE;
+    unsafe {
+        let p = (&raw mut V0_OUT) as *mut u8;
+        asm!(
+            "ssr = {selected}",
+            "isync",
+            "vmem({p}+#0) = v0",
+            "ssr = {disabled}",
+            "isync",
+            selected = in(reg) selected,
+            p = in(reg) p,
+            disabled = in(reg) disabled,
+            lateout("v0") _,
+            options(nostack),
+        );
+
+        let words = p as *const u32;
+        let w0 = core::ptr::read_volatile(words);
+        for i in 1..32 {
+            let w = core::ptr::read_volatile(words.add(i));
+            if w != w0 {
+                println!(
+                    "FAIL: v0 lane {} = 0x{:08x} but lane 0 = 0x{:08x}",
+                    i, w, w0
+                );
+                record_error();
+                break;
+            }
+        }
+        w0
+    }
+}
+
+// Shared state for the multi-thread tests.
 static T1_FLAG: AtomicU32 = AtomicU32::new(0);
-static mut BUF_T1: HvxBuf = HvxBuf::zeroed();
+static T1_SAW_CTX0: AtomicU32 = AtomicU32::new(0);
+static T1_SAW_CTX1: AtomicU32 = AtomicU32::new(0);
 
 fn wait_for_flag(flag: &AtomicU32, expected: u32, max_iters: u32) -> bool {
     for _ in 0..max_iters {
@@ -97,19 +180,24 @@ fn test_hvx_present() {
 // Test 2: SSR.XA readback
 // -----------------------------------------------------------------------
 
-/// Write SSR.XA=1, read back, verify bits 30:28 = 1. Restore original.
+/// SSR.XA is three bits at 29:27 whatever EXT_CONTEXTS says, so all
+/// eight encodings must round-trip, and none of them may disturb SSR.SS
+/// at bit 30 or SSR.XE at bit 31.  HVX stays disabled here: an encoding
+/// above EXT_CONTEXTS - 1 need not name a usable context.
 fn test_ssr_xa_readback() {
     let saved = read_ssr();
+    let base = saved & !(SSR_XA_MASK | SSR_XE);
 
-    // Set XA = 1 (bits 30:28)
-    let new_ssr = (saved & !SSR_XA_MASK) | (1 << SSR_XA_SHIFT);
-    write_ssr(new_ssr);
+    for xa in 0..8u32 {
+        write_ssr(base | (xa << SSR_XA_SHIFT));
 
-    let rb = read_ssr();
-    let xa = (rb & SSR_XA_MASK) >> SSR_XA_SHIFT;
-    check32!(xa, 1);
+        let rb = read_ssr();
+        check32!((rb & SSR_XA_MASK) >> SSR_XA_SHIFT, xa);
+        // XA must not have bled into the neighbouring bits.
+        check32!(rb & SSR_SS, base & SSR_SS);
+        check32!(rb & SSR_XE, 0);
+    }
 
-    // Restore
     write_ssr(saved);
 }
 
@@ -133,48 +221,27 @@ fn test_hvx_vsplat_store() {
 // Test 4: HVX context isolation (multi-thread)
 // -----------------------------------------------------------------------
 
-/// Thread 1 entry: set SSR.XA=1, splat 0xBBBBBBBB, store to BUF_T1.
+/// Thread 1 entry: set SSR.XA=1 and splat 0xBBBBBBBB.
 extern "C" fn thread1_hvx_context() {
-    let ssr = read_ssr();
-    let new_ssr = (ssr & !SSR_XA_MASK) | (1 << SSR_XA_SHIFT) | SSR_XE;
-    write_ssr(new_ssr);
-
-    unsafe {
-        let buf_ptr = (&raw mut BUF_T1) as *mut HvxVector;
-        hvx_splat_store(buf_ptr, 0xBBBB_BBBB);
-    }
+    v0_splat(1, 0xBBBB_BBBB);
+    let _ = v0_readback(1);
 
     T1_FLAG.store(1, Ordering::SeqCst);
 }
 
 /// Multi-thread context isolation:
-/// - T0: SSR.XA=0, splat 0xAAAAAAAA into V0, store to buf_t0.
-/// - Start T1 with SSR.XA=1: splat 0xBBBBBBBB into V0, store to buf_t1.
-/// - T0: re-read V0 into buf_t0_after.
-/// - Verify buf_t0_after still has 0xAAAAAAAA (T1 used different context).
-/// - Verify buf_t1 has 0xBBBBBBBB.
+/// - T0 on context 0 puts 0xAAAAAAAA in V0.
+/// - T1 on context 1 puts 0xBBBBBBBB in its V0.
+/// - T0 reads V0 back and must still see 0xAAAAAAAA.
 fn test_hvx_context_isolation() {
-    let mut buf_t0 = HvxBuf::zeroed();
-    let mut buf_t0_after = HvxBuf::zeroed();
-
-    // Clear thread 1 state
     T1_FLAG.store(0, Ordering::SeqCst);
-    unsafe {
-        core::ptr::write_bytes((&raw mut BUF_T1) as *mut u8, 0, 128);
-    }
 
-    // T0: set XA=0, splat pattern into a vector, hold the value
     let saved_ssr = read_ssr();
-    let t0_ssr = (saved_ssr & !SSR_XA_MASK) | SSR_XE; // XA=0, XE=1
-    write_ssr(t0_ssr);
 
-    let v_t0 = unsafe { Q6_V_vsplat_R(0xAAAA_AAAA_u32 as i32) };
-    unsafe {
-        core::ptr::write_volatile(buf_t0.as_hvx_mut_ptr(), v_t0);
-    }
-    buf_t0.check_all_words(0xAAAA_AAAA);
+    v0_splat(0, 0xAAAA_AAAA);
+    check32!(v0_readback(0), 0xAAAA_AAAA);
 
-    // Start T1 with its own HVX context
+    // Start T1 on its own HVX context.
     set_thread_entry(1, Some(thread1_hvx_context));
     start_threads(1 << 1);
 
@@ -182,20 +249,9 @@ fn test_hvx_context_isolation() {
     check!(ok);
     wait_for_thread_stopped(1, 50000);
 
-    // T0: store the held vector again — should still be 0xAAAA_AAAA
-    // (T1 ran on a different HW thread with a different XA context)
-    unsafe {
-        core::ptr::write_volatile(buf_t0_after.as_hvx_mut_ptr(), v_t0);
-    }
-    buf_t0_after.check_all_words(0xAAAA_AAAA);
+    // T1 wrote a different context, so T0's V0 is untouched.
+    check32!(v0_readback(0), 0xAAAA_AAAA);
 
-    // Verify T1's buffer
-    unsafe {
-        let buf_t1_ref = &*(&raw const BUF_T1);
-        buf_t1_ref.check_all_words(0xBBBB_BBBB);
-    }
-
-    // Restore SSR
     write_ssr(saved_ssr);
 }
 
@@ -232,40 +288,80 @@ fn test_hvx_xe_disable_exception() {
 }
 
 // -----------------------------------------------------------------------
-// Test 6: HVX context switch on single thread
+// Test 6: HVX context switch on a single thread
 // -----------------------------------------------------------------------
 
-/// Single thread switches between contexts:
-/// - SSR.XA=0: splat 0x11111111, store to buf0.
-/// - SSR.XA=1: splat 0x22222222, store to buf1.
-/// - Verify buf0 still has 0x11111111 (context 1 ops didn't corrupt it).
-/// - Verify buf1 has 0x22222222.
+/// One thread moving between two contexts.  Each read of V0 comes out of
+/// the register file after the switch, so a core that ignored SSR.XA and
+/// gave every context the same register file would fail the last two
+/// checks.
 fn test_hvx_context_switch_xa() {
-    let mut buf0 = HvxBuf::zeroed();
-    let mut buf1 = HvxBuf::zeroed();
+    let saved_ssr = read_ssr();
+
+    // Context 0 gets a pattern.
+    v0_splat(0, 0xAAAA_AAAA);
+    check32!(v0_readback(0), 0xAAAA_AAAA);
+
+    // Context 1 must not see it, and gets its own.
+    check32_ne!(v0_readback(1), 0xAAAA_AAAA);
+    v0_splat(1, 0xBBBB_BBBB);
+    check32!(v0_readback(1), 0xBBBB_BBBB);
+
+    // Context 0 kept its pattern while context 1 was selected.
+    check32!(v0_readback(0), 0xAAAA_AAAA);
+
+    // And so did context 1.
+    check32!(v0_readback(1), 0xBBBB_BBBB);
+
+    write_ssr(saved_ssr);
+}
+
+// -----------------------------------------------------------------------
+// Test 7: HVX context handed between hardware threads
+// -----------------------------------------------------------------------
+
+/// Thread 1 entry: report what it sees in context 0 and in context 1,
+/// then leave a new value behind in context 1.
+extern "C" fn thread1_hvx_handoff() {
+    T1_SAW_CTX0.store(v0_readback(0), Ordering::SeqCst);
+
+    T1_SAW_CTX1.store(v0_readback(1), Ordering::SeqCst);
+    v0_splat(1, 0xD00D_FEED);
+
+    T1_FLAG.store(1, Ordering::SeqCst);
+}
+
+/// A context is not private to a hardware thread: an operating system
+/// hands one between threads, and whoever selects it next finds the
+/// register file as the previous owner left it.  T0 fills context 1 and
+/// releases it, T1 must find T0's value in context 1 but not in context
+/// 0, and T0 then takes context 1 back and must see T1's value.
+fn test_hvx_context_handoff() {
+    T1_FLAG.store(0, Ordering::SeqCst);
+    T1_SAW_CTX0.store(0, Ordering::SeqCst);
+    T1_SAW_CTX1.store(0, Ordering::SeqCst);
 
     let saved_ssr = read_ssr();
-    let ssr_ctx0 = (saved_ssr & !SSR_XA_MASK) | SSR_XE; // XA=0
-    let ssr_ctx1 = (saved_ssr & !SSR_XA_MASK) | (1 << SSR_XA_SHIFT) | SSR_XE; // XA=1
 
-    // Context 0: splat pattern A
-    write_ssr(ssr_ctx0);
-    unsafe {
-        hvx_splat_store(buf0.as_hvx_mut_ptr(), 0x1111_1111);
-    }
+    // T0 leaves a value in context 1, then releases the coprocessor.
+    v0_splat(1, 0xC0FF_EE00);
+    check32!(v0_readback(1), 0xC0FF_EE00);
 
-    // Context 1: splat pattern B
-    write_ssr(ssr_ctx1);
-    unsafe {
-        hvx_splat_store(buf1.as_hvx_mut_ptr(), 0x2222_2222);
-    }
+    set_thread_entry(1, Some(thread1_hvx_handoff));
+    start_threads(1 << 1);
 
-    // Verify context 0's store wasn't corrupted by context 1's operations
-    buf0.check_all_words(0x1111_1111);
-    // Verify context 1's store
-    buf1.check_all_words(0x2222_2222);
+    let ok = wait_for_flag(&T1_FLAG, 1, 50000);
+    check!(ok);
+    wait_for_thread_stopped(1, 50000);
 
-    // Restore SSR
+    // T1 found what T0 left in context 1, and context 0 is a different
+    // register file, so the value must not have shown up there too.
+    check32_ne!(T1_SAW_CTX0.load(Ordering::SeqCst), 0xC0FF_EE00);
+    check32!(T1_SAW_CTX1.load(Ordering::SeqCst), 0xC0FF_EE00);
+
+    // T0 takes the context back and finds what T1 left.
+    check32!(v0_readback(1), 0xD00D_FEED);
+
     write_ssr(saved_ssr);
 }
 
@@ -290,6 +386,7 @@ pub extern "C" fn rust_main() -> i32 {
     run_test("hvx_context_isolation", test_hvx_context_isolation);
     run_test("hvx_xe_disable_exception", test_hvx_xe_disable_exception);
     run_test("hvx_context_switch_xa", test_hvx_context_switch_xa);
+    run_test("hvx_context_handoff", test_hvx_context_handoff);
 
     test_suite_end() as i32
 }

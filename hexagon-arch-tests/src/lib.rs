@@ -49,8 +49,8 @@ pub const SSR_IE: u32 = 1 << SSR_IE_BIT;
 pub const SSR_GM: u32 = 1 << SSR_GM_BIT;
 pub const SSR_CE: u32 = 1 << SSR_CE_BIT;
 pub const SSR_PE: u32 = 1 << SSR_PE_BIT;
-pub const SSR_XA_SHIFT: u32 = 28;
-pub const SSR_XA_MASK: u32 = 0x7 << SSR_XA_SHIFT; // bits 30:28
+pub const SSR_XA_SHIFT: u32 = 27;
+pub const SSR_XA_MASK: u32 = 0x7 << SSR_XA_SHIFT; // bits 29:27
 pub const SSR_SS: u32 = 1 << SSR_SS_BIT;
 pub const SSR_XE: u32 = 1 << SSR_XE_BIT;
 
