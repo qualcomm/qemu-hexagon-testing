@@ -198,6 +198,48 @@ fn test_guest_insn_faults_in_user_mode() {
     check!(read_ssr() & SSR_UM == 0);
 }
 
+/// Trampoline run in guest mode by `enter_guest_mode()`: the same
+/// supervisor-only (A_PRIV) register read as `priv_insn_probe`, which must
+/// fault even though guest mode is one step up from plain user mode --
+/// A_PRIV requires true monitor privilege, guest mode is not enough.
+fn priv_insn_probe_guest() {
+    unsafe {
+        asm!("{{ {0} = modectl }}", out(reg) _, options(nostack));
+    }
+    exit_user_mode();
+}
+
+/// A supervisor-only (A_PRIV) instruction executed from guest mode must
+/// fault with cause PRIV_INSN_IN_USER (SSR:CAUSE 0x1b), same as from user
+/// mode: guest mode does not grant monitor-only privileges.
+fn test_priv_insn_faults_in_guest_mode() {
+    reset_exception_state();
+    enter_guest_mode(priv_insn_probe_guest);
+    check32!(get_exception_count(), 1);
+    check32!(get_exception_cause(), CAUSE_PRIV_INSN_IN_USER);
+    // Back in supervisor mode: both UM and GM clear.
+    check!(read_ssr() & (SSR_UM | SSR_GM) == 0);
+}
+
+/// Trampoline run in guest mode: the same guest-register (A_GUEST) read as
+/// `guest_insn_probe`. Unlike from user mode, this must NOT fault -- guest
+/// mode is sufficient privilege for A_GUEST instructions.
+fn guest_insn_probe_guest() {
+    unsafe {
+        asm!("{{ {0} = gelr }}", out(reg) _, options(nostack));
+    }
+    exit_user_mode();
+}
+
+/// A guest-register (A_GUEST) instruction executed from guest mode must be
+/// permitted: no exception at all, unlike the user-mode case above.
+fn test_guest_insn_allowed_in_guest_mode() {
+    reset_exception_state();
+    enter_guest_mode(guest_insn_probe_guest);
+    check32!(get_exception_count(), 0);
+    check!(read_ssr() & (SSR_UM | SSR_GM) == 0);
+}
+
 #[no_mangle]
 pub extern "C" fn rust_main() -> i32 {
     test_suite_begin("Guest Mode / Virtualization");
@@ -219,6 +261,14 @@ pub extern "C" fn rust_main() -> i32 {
     run_test(
         "guest_insn_faults_in_user_mode",
         test_guest_insn_faults_in_user_mode,
+    );
+    run_test(
+        "priv_insn_faults_in_guest_mode",
+        test_priv_insn_faults_in_guest_mode,
+    );
+    run_test(
+        "guest_insn_allowed_in_guest_mode",
+        test_guest_insn_allowed_in_guest_mode,
     );
     run_test("ccr_vv1_bit", test_ccr_vv1_bit);
 

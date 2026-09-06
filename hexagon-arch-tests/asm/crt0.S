@@ -678,8 +678,15 @@ event_handle_trap0:
 	memw(##exception_elr) = r2
 	jump .Ltrap0_done
 .Ltrap0_exit_user:
-	/* Clear UM bit (bit 16) in SSR to return to supervisor */
+	/*
+	 * Clear UM (bit 16) and GM (bit 19) in SSR to return to supervisor,
+	 * regardless of whether we were in plain user mode (UM=1, GM=0) or
+	 * guest mode (UM=1, GM=1) -- this handler runs at monitor privilege
+	 * (the exception entry forces SSR.EX=1), so the write is permitted
+	 * either way.
+	 */
 	r0 = clrbit(r0, #16)
+	r0 = clrbit(r0, #19)
 	ssr = r0
 	jump .Ltrap0_done
 .Ltrap0_semihost:

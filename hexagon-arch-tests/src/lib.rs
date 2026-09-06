@@ -1267,11 +1267,40 @@ pub fn enter_user_mode(user_fn: fn()) {
 }
 
 /// Exit user mode by executing trap0(#1).
-/// The trap0 handler in crt0.S recognizes cause==1 as "exit user mode".
+/// The trap0 handler in crt0.S recognizes cause==1 as "exit user mode"
+/// and clears both UM and GM, so this also exits guest mode.
 #[inline(always)]
 pub fn exit_user_mode() {
     unsafe {
         asm!("trap0(#1)", options(nostack));
+    }
+}
+
+/// Enter guest mode: sets SSR.UM=1, SSR.GM=1, SSR.EX=1, ELR to the provided
+/// function, then executes `rte` to enter guest mode. The guest function
+/// should call `exit_user_mode()` (trap0(#1)) to return to supervisor mode
+/// -- the same handler clears both UM and GM.
+///
+/// # Safety
+/// The function pointer must be valid and must eventually call trap0(#1).
+#[inline(never)]
+pub fn enter_guest_mode(guest_fn: fn()) {
+    unsafe {
+        asm!(
+            // Set ELR to the guest function address
+            "elr = {func}",
+            // Read SSR, set UM (bit 16), EX (bit 17), and GM (bit 19)
+            "r0 = ssr",
+            "r0 = setbit(r0, #16)",
+            "r0 = setbit(r0, #17)",
+            "r0 = setbit(r0, #19)",
+            "ssr = r0",
+            "isync",
+            "rte",
+            func = in(reg) guest_fn as *const () as u32,
+            out("r0") _,
+            options(nostack),
+        );
     }
 }
 
