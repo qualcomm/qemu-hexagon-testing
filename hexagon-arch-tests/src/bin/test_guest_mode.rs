@@ -8,7 +8,9 @@
 
 #![no_std]
 #![no_main]
+#![feature(asm_experimental_arch)]
 
+use core::arch::asm;
 use hexagon_arch_tests::*;
 
 /// Verify we're not in guest mode (SSR.GM=0).
@@ -151,6 +153,51 @@ fn test_ccr_vv1_bit() {
     write_ccr(ccr);
 }
 
+/// Trampoline run in user mode by `enter_user_mode()`: attempts a
+/// supervisor-only (A_PRIV) register read -- `modectl` -- which must fault.
+/// Put in its own packet so the exception handler's ELR+4 advance lands
+/// cleanly on the following instruction, matching the pattern used in
+/// test_hvx_context's XE-disable test.
+fn priv_insn_probe() {
+    unsafe {
+        asm!("{{ {0} = modectl }}", out(reg) _, options(nostack));
+    }
+    exit_user_mode();
+}
+
+/// A supervisor-only (A_PRIV) instruction executed from user mode must
+/// fault with cause PRIV_INSN_IN_USER (SSR:CAUSE 0x1b), not silently
+/// succeed or fault with some other cause.
+fn test_priv_insn_faults_in_user_mode() {
+    reset_exception_state();
+    enter_user_mode(priv_insn_probe);
+    check32!(get_exception_count(), 1);
+    check32!(get_exception_cause(), CAUSE_PRIV_INSN_IN_USER);
+    // We're back in supervisor mode (exit_user_mode ran before the
+    // fault path even had a chance not to, but confirm anyway).
+    check!(read_ssr() & SSR_UM == 0);
+}
+
+/// Trampoline run in user mode: attempts a guest-register (A_GUEST) read
+/// -- `gelr` -- which requires monitor-or-guest privilege and must fault
+/// from plain user mode.
+fn guest_insn_probe() {
+    unsafe {
+        asm!("{{ {0} = gelr }}", out(reg) _, options(nostack));
+    }
+    exit_user_mode();
+}
+
+/// A guest-register (A_GUEST) instruction executed from user mode must
+/// fault with cause GUEST_INSN_IN_USER (SSR:CAUSE 0x1a).
+fn test_guest_insn_faults_in_user_mode() {
+    reset_exception_state();
+    enter_user_mode(guest_insn_probe);
+    check32!(get_exception_count(), 1);
+    check32!(get_exception_cause(), CAUSE_GUEST_INSN_IN_USER);
+    check!(read_ssr() & SSR_UM == 0);
+}
+
 #[no_mangle]
 pub extern "C" fn rust_main() -> i32 {
     test_suite_begin("Guest Mode / Virtualization");
@@ -165,6 +212,14 @@ pub extern "C" fn rust_main() -> i32 {
     run_test("gsr_readwrite", test_gsr_readwrite);
     run_test("gosp_readwrite", test_gosp_readwrite);
     run_test("gbadva_readwrite", test_gbadva_readwrite);
+    run_test(
+        "priv_insn_faults_in_user_mode",
+        test_priv_insn_faults_in_user_mode,
+    );
+    run_test(
+        "guest_insn_faults_in_user_mode",
+        test_guest_insn_faults_in_user_mode,
+    );
     run_test("ccr_vv1_bit", test_ccr_vv1_bit);
 
     test_suite_end() as i32

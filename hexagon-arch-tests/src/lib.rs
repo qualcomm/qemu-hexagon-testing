@@ -139,6 +139,7 @@ pub const CAUSE_PRIV_NO_UREAD: u32 = 0x24;
 pub const CAUSE_PRIV_NO_UWRITE: u32 = 0x25;
 pub const CAUSE_PRIV_NO_UXEC: u32 = 0x14;
 pub const CAUSE_PRIV_INSN_IN_USER: u32 = 0x1B;
+pub const CAUSE_GUEST_INSN_IN_USER: u32 = 0x1A;
 pub const CAUSE_NO_COPROC_ENABLE: u32 = 0x16;
 
 // ---------------------------------------------------------------------------
