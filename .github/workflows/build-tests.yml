@@ -358,6 +358,9 @@ jobs:
         tar -czf arch_tests_uart.tar.gz arch_tests_uart_package/
         ls -la arch_tests_uart.tar.gz
 
+    - name: Create qprintf v81 SDK package
+      run: ./sdk_examples/package_qprintf_v81.sh
+
     - name: Archive standalone test package
       uses: actions/upload-artifact@v4
       with:
@@ -391,6 +394,13 @@ jobs:
       with:
         name: arch-tests-uart-package
         path: arch_tests_uart.tar.gz
+        retention-days: 90
+
+    - name: Archive qprintf v81 SDK package
+      uses: actions/upload-artifact@v4
+      with:
+        name: qprintf-v81-sdk-package
+        path: qemu-qurt-tests-sdk-v81.tar.gz
         retention-days: 90
 
   create-release:
