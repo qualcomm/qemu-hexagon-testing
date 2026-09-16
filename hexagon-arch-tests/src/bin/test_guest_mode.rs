@@ -10,8 +10,96 @@
 #![no_main]
 #![feature(asm_experimental_arch)]
 
-use core::arch::asm;
+use core::arch::{asm, global_asm};
+use core::sync::atomic::{AtomicU32, Ordering};
 use hexagon_arch_tests::*;
+
+const GSR_UM: u32 = 1 << 31;
+const CAUSE_PRIV_INSN_IN_GUEST: u32 = 0x1b;
+
+#[no_mangle]
+static DTG_TRAP0_HIT: AtomicU32 = AtomicU32::new(0);
+#[no_mangle]
+static DTG_ERROR_HIT: AtomicU32 = AtomicU32::new(0);
+static VMGETIE_RESULT: AtomicU32 = AtomicU32::new(0);
+static VMSETIE_OLD: AtomicU32 = AtomicU32::new(0);
+static VMSPSWAP_RESULT: AtomicU32 = AtomicU32::new(0);
+
+global_asm!(
+    r#"
+    .p2align 8
+    .global dtg_event_vectors
+dtg_event_vectors:
+    jump .
+    jump .
+    jump dtg_error_handler
+    jump .
+    jump .
+    jump .
+    jump .
+    jump .
+    jump dtg_trap0_handler
+
+dtg_error_handler:
+    r0 = #1
+    memw(##DTG_ERROR_HIT) = r0
+    r0 = gelr
+    r0 = add(r0, #4)
+    gelr = r0
+    trap1(r0, #1)
+
+dtg_trap0_handler:
+    r0 = #1
+    memw(##DTG_TRAP0_HIT) = r0
+    trap1(r0, #0)
+    jumpr r31
+
+    .p2align 8
+    .global dtg_monitor_vectors
+dtg_monitor_vectors:
+    jump .
+    jump .
+    jump .
+    jump .
+    jump .
+    jump .
+    jump .
+    jump .
+    jump .
+    jump dtg_monitor_trap1_handler
+
+dtg_monitor_trap1_handler:
+    r0 = ccr
+    r0 = clrbit(r0, #25)
+    ccr = r0
+    r0 = ssr
+    r0 = clrbit(r0, #16)
+    r0 = clrbit(r0, #19)
+    ssr = r0
+    isync
+    rte
+"#
+);
+
+extern "C" {
+    static dtg_event_vectors: u8;
+    static dtg_monitor_vectors: u8;
+}
+
+fn read_gevb() -> u32 {
+    let result: u32;
+
+    unsafe {
+        asm!("{result} = s11", result = out(reg) result, options(nostack));
+    }
+    result
+}
+
+fn write_gevb(value: u32) {
+    unsafe {
+        asm!("s11 = {value}", value = in(reg) value, options(nostack));
+    }
+}
 
 /// Verify we're not in guest mode (SSR.GM=0).
 fn test_not_in_guest_mode() {
@@ -240,6 +328,109 @@ fn test_guest_insn_allowed_in_guest_mode() {
     check!(read_ssr() & (SSR_UM | SSR_GM) == 0);
 }
 
+fn guest_virtual_instructions() {
+    let mut value: u32 = 0;
+
+    unsafe {
+        asm!("trap1(r0, #4)", inout("r0") value, options(nostack));
+    }
+    VMGETIE_RESULT.store(value, Ordering::SeqCst);
+
+    value = 1;
+    unsafe {
+        asm!("trap1(r0, #3)", inout("r0") value, options(nostack));
+    }
+    VMSETIE_OLD.store(value, Ordering::SeqCst);
+
+    value = 0x1234_5678;
+    unsafe {
+        asm!("trap1(r0, #6)", inout("r0") value, options(nostack));
+    }
+    VMSPSWAP_RESULT.store(value, Ordering::SeqCst);
+    exit_user_mode();
+}
+
+/// GRE enables virtual Trap1 instructions in Guest mode.
+fn test_guest_virtual_instructions() {
+    let saved_ccr = read_ccr();
+    let saved_gsr = read_gsr();
+    let saved_gosp = read_gosp();
+
+    write_ccr((saved_ccr & !CCR_GIE) | CCR_GRE);
+    // VMSPSWAP swaps only when GSR.UM is set.
+    write_gsr(GSR_UM);
+    write_gosp(0x89ab_cdef);
+    isync();
+    enter_guest_mode(guest_virtual_instructions);
+
+    check32!(VMGETIE_RESULT.load(Ordering::SeqCst), 0);
+    check32!(VMSETIE_OLD.load(Ordering::SeqCst), 0);
+    check32!(VMSPSWAP_RESULT.load(Ordering::SeqCst), 0x89ab_cdef);
+    check32!(read_gosp(), 0x1234_5678);
+
+    write_gosp(saved_gosp);
+    write_gsr(saved_gsr);
+    write_ccr(saved_ccr);
+    isync();
+}
+
+fn guest_trap0() {
+    unsafe {
+        asm!("trap0(#2)", options(nostack));
+    }
+    exit_user_mode();
+}
+
+/// GTE vectors Trap0 directly to GEVB.
+fn test_direct_guest_trap0() {
+    let saved_ccr = read_ccr();
+    let saved_gevb = read_gevb();
+    let saved_evb = read_evb();
+
+    DTG_TRAP0_HIT.store(0, Ordering::SeqCst);
+    reset_exception_state();
+    write_gevb(unsafe { &dtg_event_vectors as *const u8 as u32 });
+    write_evb(unsafe { &dtg_monitor_vectors as *const u8 as u32 });
+    write_ccr(saved_ccr | CCR_GTE | CCR_GRE);
+    isync();
+    enter_guest_mode(guest_trap0);
+
+    check32!(DTG_TRAP0_HIT.load(Ordering::SeqCst), 1);
+
+    write_evb(saved_evb);
+    write_gevb(saved_gevb);
+    write_ccr(saved_ccr);
+    isync();
+}
+
+fn guest_privileged_read() {
+    unsafe {
+        asm!("{value} = modectl", value = out(reg) _, options(nostack));
+    }
+    exit_user_mode();
+}
+
+/// GEE vectors supported errors to GEVB; VMRTE resumes.
+fn test_direct_guest_error() {
+    let saved_ccr = read_ccr();
+    let saved_gevb = read_gevb();
+
+    DTG_ERROR_HIT.store(0, Ordering::SeqCst);
+    reset_exception_state();
+    write_gevb(unsafe { &dtg_event_vectors as *const u8 as u32 });
+    write_ccr(saved_ccr | CCR_GEE | CCR_GRE);
+    isync();
+    enter_guest_mode(guest_privileged_read);
+
+    check32!(DTG_ERROR_HIT.load(Ordering::SeqCst), 1);
+    check32!(get_exception_count(), 0);
+    check32!(read_gsr() & 0xffff, CAUSE_PRIV_INSN_IN_GUEST);
+
+    write_gevb(saved_gevb);
+    write_ccr(saved_ccr);
+    isync();
+}
+
 #[no_mangle]
 pub extern "C" fn rust_main() -> i32 {
     test_suite_begin("Guest Mode / Virtualization");
@@ -271,6 +462,12 @@ pub extern "C" fn rust_main() -> i32 {
         test_guest_insn_allowed_in_guest_mode,
     );
     run_test("ccr_vv1_bit", test_ccr_vv1_bit);
+    run_test(
+        "guest_virtual_instructions",
+        test_guest_virtual_instructions,
+    );
+    run_test("direct_guest_trap0", test_direct_guest_trap0);
+    run_test("direct_guest_error", test_direct_guest_error);
 
     test_suite_end() as i32
 }
