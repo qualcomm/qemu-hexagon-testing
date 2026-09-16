@@ -362,42 +362,42 @@ jobs:
       run: ./sdk_examples/package_qprintf_v81.sh
 
     - name: Archive standalone test package
-      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
         name: hvx-standalone-package
         path: hvx_standalone.tar.gz
         retention-days: 90
 
     - name: Archive Linux test package
-      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
         name: hvx-linux-package
         path: hvx_linux.tar.gz
         retention-days: 90
 
     - name: Archive standalone system tests package
-      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
         name: systests-standalone-package
         path: systests_standalone.tar.gz
         retention-days: 90
 
     - name: Archive hexagon-arch-tests semihosting package
-      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
         name: arch-tests-semihosting-package
         path: arch_tests_semihosting.tar.gz
         retention-days: 90
 
     - name: Archive hexagon-arch-tests UART package
-      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
         name: arch-tests-uart-package
         path: arch_tests_uart.tar.gz
         retention-days: 90
 
     - name: Archive qprintf v81 SDK package
-      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
         name: qprintf-v81-sdk-package
         path: qemu-qurt-tests-sdk-v81.tar.gz
