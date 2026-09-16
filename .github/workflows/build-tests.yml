@@ -23,7 +23,7 @@ jobs:
 
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v6
+      uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
 
     - name: Install dependencies
       run: |
@@ -362,42 +362,42 @@ jobs:
       run: ./sdk_examples/package_qprintf_v81.sh
 
     - name: Archive standalone test package
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
       with:
         name: hvx-standalone-package
         path: hvx_standalone.tar.gz
         retention-days: 90
 
     - name: Archive Linux test package
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
       with:
         name: hvx-linux-package
         path: hvx_linux.tar.gz
         retention-days: 90
 
     - name: Archive standalone system tests package
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
       with:
         name: systests-standalone-package
         path: systests_standalone.tar.gz
         retention-days: 90
 
     - name: Archive hexagon-arch-tests semihosting package
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
       with:
         name: arch-tests-semihosting-package
         path: arch_tests_semihosting.tar.gz
         retention-days: 90
 
     - name: Archive hexagon-arch-tests UART package
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
       with:
         name: arch-tests-uart-package
         path: arch_tests_uart.tar.gz
         retention-days: 90
 
     - name: Archive qprintf v81 SDK package
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
       with:
         name: qprintf-v81-sdk-package
         path: qemu-qurt-tests-sdk-v81.tar.gz
@@ -412,7 +412,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           fetch-depth: 0
 
@@ -421,7 +421,7 @@ jobs:
         run: echo "TAG_NAME=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
 
       - name: Download build artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           path: artifacts/
           pattern: '*-package'
