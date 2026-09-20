@@ -13,8 +13,6 @@
 
 #include "cfgtable.h"
 
-#define CSR_BASE  0xfab00000
-#define L2VIC_BASE ((CSR_BASE) + 0x10000)
 #define L2VIC_INT_ENABLE(b, n) \
         ((volatile unsigned int *) ((b) + 0x100 + 4 * (n / 32)))
 #define L2VIC_INT_ENABLE_SET(b, n) \
@@ -27,7 +25,7 @@ main()
     unsigned int irq_bit;
 
     /* setup the fastl2vic interface and setup an indirect mapping */
-    volatile  uint32_t *A = (uint32_t *)0x888e0000;
+    volatile uint32_t *A = (uint32_t *)GET_FASTL2VIC_BASE();
     add_translation_extended(3, (void *)A, GET_FASTL2VIC_BASE(), 16, 7, 4, 0, 0, 3);
 
     uint32_t l2vic_base = GET_SUBSYSTEM_BASE() + 0x10000;
