@@ -20,7 +20,7 @@ void pause()
 }
 
 vu32 g_l2vic_base;
-vu32 *FAST_INTF_VA = (vu32 *)0x888e0000;
+vu32 *FAST_INTF_VA;
 #define FIRST_IRQ (36)
 #define STACK_SIZE (16384)
 #define ARCH_REV __HEXAGON_ARCH__
@@ -223,7 +223,10 @@ int main()
     thread_create_blocked(thread, &stack2[STACK_SIZE - 16], 2, (void *)&int2);
     thread_create_blocked(thread, &stack1[STACK_SIZE - 16], 1, (void *)&int1);
 
-    /* setup the fastl2vic interface and setup an indirect mapping */
+    /* Get the fast interface address from the configuration table. */
+    FAST_INTF_VA = (vu32 *)GET_FASTL2VIC_BASE();
+
+    /* Set up the fastl2vic interface and an identity mapping. */
     add_translation_extended(3, (void *)FAST_INTF_VA, GET_FASTL2VIC_BASE(), 16, 7, 4, 0, 0, 3);
 
     g_l2vic_base = GET_SUBSYSTEM_BASE() + 0x10000;
