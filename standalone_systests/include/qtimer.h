@@ -48,7 +48,7 @@ typedef volatile unsigned long long vu64;
 #define QTMR_CNTP2_CTL ((vu32 *)((QTMR_BASE) + 0x202c))
 #define QTMR_CNTP2_VER  ((vu32 *)((QTMR_BASE) + 0x2fd0))
 
-#define L2VIC_BASE ((CSR_BASE) + 0x10000)
+#define L2VIC_BASE (GET_SUBSYSTEM_BASE() + 0x10000)
 #define L2VIC_INT_ENABLE(n) ((vu32 *)((L2VIC_BASE) + 0x100 + 4 * (n / 32)))
 #define L2VIC_INT_ENABLE_CLEAR(n) \
     ((vu32 *)((L2VIC_BASE) + 0x180 + 4 * (n / 32)))
@@ -210,4 +210,3 @@ u32 read_ver2(void)
     u32 ver = *QTMR_CNTP2_VER;
     return ver;
 }
-

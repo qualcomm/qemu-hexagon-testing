@@ -55,7 +55,7 @@ typedef volatile unsigned long long vu64; /* required */
 #define QTMR_CNTP2_TVAL ((vu32 *)((QTMR_BASE) + 0x2028))
 #define QTMR_CNTP2_CTL ((vu32 *)((QTMR_BASE) + 0x202c))
 
-#define L2VIC_BASE ((CSR_BASE) + 0x10000)
+#define L2VIC_BASE (GET_SUBSYSTEM_BASE() + 0x10000)
 #define L2VIC_INT_ENABLE(n) ((vu32 *)((L2VIC_BASE) + 0x100 + 4 * (n / 32)))
 #define L2VIC_INT_ENABLE_CLEAR(n) \
     ((vu32 *)((L2VIC_BASE) + 0x180 + 4 * (n / 32)))
@@ -210,14 +210,17 @@ void enable_core_interrupt()
 int main()
 {
     int i;
+    uint32_t subsystem_base = GET_SUBSYSTEM_BASE();
     exit_flag = 0;
-    printf("\nCSR base=0x%x; L2VIC base=0x%x\n", CSR_BASE, L2VIC_BASE);
+    printf("\nCSR base=0x%lx; L2VIC base=0x%lx\n",
+           (unsigned long)subsystem_base,
+           (unsigned long)(subsystem_base + 0x10000));
     printf("QTimer1 will go off 20 times (once every 1/%d sec).\n",
            (QTMR_FREQ) / (ticks_per_qtimer1));
     printf("QTimer2 will go off 2 times (once every 1/%d sec).\n\n",
            (QTMR_FREQ) / (ticks_per_qtimer2));
 
-    add_translation((void *)CSR_BASE, (void *)CSR_BASE, 4);
+    add_translation((void *)subsystem_base, (void *)subsystem_base, 4);
 
     enable_core_interrupt();
 
