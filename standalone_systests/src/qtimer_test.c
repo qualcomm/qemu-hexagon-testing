@@ -20,14 +20,17 @@
 int main()
 {
     int i;
+    uint32_t subsystem_base = GET_SUBSYSTEM_BASE();
     exit_flag = 0;
-    printf("\nCSR base=0x%x; L2VIC base=0x%x\n", CSR_BASE, L2VIC_BASE);
+    printf("\nCSR base=0x%lx; L2VIC base=0x%lx\n",
+           (unsigned long)subsystem_base,
+           (unsigned long)(subsystem_base + 0x10000));
     printf("QTimer1 will go off 20 times (once every 1/%d sec).\n",
            (QTMR_FREQ) / (ticks_per_qtimer1));
     printf("QTimer2 will go off 2 times (once every 1/%d sec).\n\n",
            (QTMR_FREQ) / (ticks_per_qtimer2));
 
-    add_translation((void *)CSR_BASE, (void *)CSR_BASE, 4);
+    add_translation((void *)subsystem_base, (void *)subsystem_base, 4);
 
     enable_core_interrupt();
 
