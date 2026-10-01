@@ -74,9 +74,7 @@ static void thread_func(void *arg)
 static volatile int ints_handled; /* used by different hw threads */
 static void interrupt_handler(int intno)
 {
-    k0lock();
     isr_work();
-    k0unlock();
     __atomic_fetch_add(&ints_handled, 1, __ATOMIC_SEQ_CST);
 }
 
