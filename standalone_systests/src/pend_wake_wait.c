@@ -5,9 +5,11 @@
 
 #define DEBUG 0
 
+#include "cfgtable.h"
 #include "hexagon_standalone.h"
 #include "interrupts.h"
 #include "util.h"
+#include <assert.h>
 #include <stdatomic.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -80,13 +82,21 @@ static void interrupt_handler(int intno)
 
 int main(int argc, char *argv[])
 {
+    puts("Testing pend/wake/wait");
+
+    uint32_t thread_enable_mask = read_cfgtable_field(0x48);
+    printf("Hardware thread enable mask: 0x%08lx\n",
+           (unsigned long)thread_enable_mask);
+    uint32_t required_mask = (1 << (COMPUTE_THREADS + 1)) - 1;
+    assert((thread_enable_mask & required_mask) == required_mask);
+    printf("Verified %d hardware threads are available for test\n",
+           COMPUTE_THREADS + 1);
+
     for (int i = 0; i < MAX_INT_NUM; i++) {
         register_interrupt(i, interrupt_handler);
     }
     set_thread_imask(ALL_INTERRUPTS_MASK);
     memset(buf, 0xa5, sizeof(buf));
-
-    puts("Testing pend/wake/wait");
     for (int i = 0; i < COMPUTE_THREADS; i++) {
         thread_create((void *)thread_func, &stack[i][ARRAY_SIZE(stack[i]) - 8],
                       i + 1, (void *)(i + 1));
