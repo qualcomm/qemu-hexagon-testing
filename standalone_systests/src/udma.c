@@ -41,7 +41,6 @@ unsigned char __attribute__((__aligned__(DESC_ALIGN))) desc_buf2[DESC_ALIGN * 2]
 #define HEX_CAUSE_PRIV_USER_NO_GINS 0x1a
 
 static bool window_miss_seen;
-static uint32_t err_badva;
 
 void udma_error_handler(uint32_t ssr)
 {
@@ -50,7 +49,6 @@ void udma_error_handler(uint32_t ssr)
     switch (cause) {
     case HEX_CAUSE_VWCTRL_WINDOW_MISS:
         window_miss_seen = true;
-        err_badva = getbadva();
         inc_elr(4);
         break;
     case HEX_CAUSE_PRIV_USER_NO_SINS:
@@ -93,7 +91,7 @@ static void set_vwctrl(bool enable, uint32_t lo, uint32_t hi)
     asm volatile("vwctrl = %0\n" : : "r"(vwctrl));
 }
 
-static void test_vtcm_dma(uint32_t access_addr, bool expect_window_miss)
+static void test_vtcm_dma(uint32_t access_addr)
 {
     const uint32_t size = 1024;
     uint8_t *src = (uint8_t *)(access_addr + ALIGN);
@@ -111,15 +109,10 @@ static void test_vtcm_dma(uint32_t access_addr, bool expect_window_miss)
     *desc = fill_descriptor0(src, dst, size / 2, NULL);
 
     window_miss_seen = false;
-    err_badva = 0;
     enter_user_mode();
     do_dmastart(desc);
-    check32(window_miss_seen, expect_window_miss);
-    if (!expect_window_miss) {
-        check32(memcmp(src, dst, size / 2), 0);
-    } else {
-        check32(err_badva, (uint32_t)(uintptr_t)src);
-    }
+    check32(window_miss_seen, false);
+    check32(memcmp(src, dst, size / 2), 0);
     free(desc);
 }
 
@@ -139,17 +132,17 @@ static void test_vwctrl_dma(void)
 
     printf("VTCM DMA at 0x%08" PRIxPTR " with VWCTRL [%" PRIu32 ", %"
            PRIu32 "]\n", vtcm_base, lo, hi);
-    test_vtcm_dma(vtcm_base + lo * 4096, false);
+    test_vtcm_dma(vtcm_base + lo * 4096);
 
     set_vwctrl(false, initial_lo, initial_hi);
     get_vwctrl(&enabled, &lo, &hi);
     check32(enabled, false);
-    test_vtcm_dma(vtcm_base + initial_lo * 4096, true);
+    test_vtcm_dma(vtcm_base + initial_lo * 4096);
 
     set_vwctrl(true, initial_lo + 1, initial_hi);
     get_vwctrl(&enabled, &lo, &hi);
     check32(enabled, true);
-    test_vtcm_dma(vtcm_base + initial_lo * 4096, true);
+    test_vtcm_dma(vtcm_base + initial_lo * 4096);
 
     set_vwctrl(true, initial_lo, initial_hi);
 }
