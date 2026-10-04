@@ -1,0 +1,112 @@
+From 3ed2bef869c048ccc25ce6b7c0bdfe557f093f80 Mon Sep 17 00:00:00 2001
+From: Brian Cain <brian.cain@oss.qualcomm.com>
+Date: Thu, 2 Jul 2026 13:27:05 -0500
+Subject: [PATCH] h2: restore DEVICE_PAGE_SIZE to SIZE_4M for correct subsystem
+ register mapping
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 8bit
+
+The device-page TLB entry maps Q6_SS_BASE_VA to the subsystem public-
+register base (PUB_BASE).  Both the L2VIC (at PRIV_BASE + 0x10000) and
+the H2 hardware timer (at PRIV_BASE + 0x20000) are accessed through this
+mapping.
+
+With DEVICE_PAGE_SIZE = SIZE_1M (1 MB), the mapped window covers only
+0xfc800000..0xfc8fffff (physical).  L2VIC at 0xfc910000 and the timer at
+0xfc920000 fall outside this window, so writes to those registers are
+silently lost.  The L2VIC never receives the interrupt-enable
+configuration and the H2 timer MMIO is never reachable, so the guest
+kernel never receives timer interrupts and hangs after the angel0
+console is disabled.
+
+Restore DEVICE_PAGE_SIZE to SIZE_4M so the 4 MB device-page covers
+0xfc800000..0xfcbfffff, which includes L2VIC and the timer.
+
+The 4MB device window at 0xffc00000 covers the VAs that the L2 config page
+(1MB, 0xffd00000) and the angel page (0xffe00000) were mapped at, so a
+read of an L2 config register matched two TLB entries.  Move both below the
+window, and keep the L2 config page a 1MB entry (MAKE_TLBLO_DEV_1M).
+
+Update BOOT_TLBLO_DEV in boot.h and the MAKE_TLBLO_DEV / MAKE_TLBHI
+macro calls in boot.ref.S to use SIZE_4M / BOOT_TLB_OFFSET_BITS_4M /
+BOOT_TLB_SHIFT_4M to match the new page size.
+
+Signed-off-by: Brian Cain <brian.cain@oss.qualcomm.com>
+---
+ kernel/init/boot/boot.h     | 3 ++-
+ kernel/init/boot/boot.ref.S | 9 +++++++--
+ kernel/util/max/max.h       | 8 +++++---
+ 3 files changed, 14 insertions(+), 6 deletions(-)
+
+diff --git a/kernel/init/boot/boot.h b/kernel/init/boot/boot.h
+index 45a7c3d..e1fbf3f 100644
+--- a/kernel/init/boot/boot.h
++++ b/kernel/init/boot/boot.h
+@@ -45,7 +45,8 @@
+ #define SBIT_SIZE 0
+ #else
+ #define BOOT_TLBLO ((1 << BOOT_TLB_PGSIZE) | (BOOT_CACHE_ATTR << TLB_ENTRY_C_BITS) | (BOOT_TLB_PERM << 28))
+-#define BOOT_TLBLO_DEV ((1 << SIZE_1M) | (DEVICE_TYPE << TLB_ENTRY_C_BITS) | (BOOT_TLB_PERM << 28))
++#define BOOT_TLBLO_DEV ((1 << SIZE_4M) | (DEVICE_TYPE << TLB_ENTRY_C_BITS) | (BOOT_TLB_PERM << 28))
++#define BOOT_TLBLO_DEV_1M ((1 << SIZE_1M) | (DEVICE_TYPE << TLB_ENTRY_C_BITS) | (BOOT_TLB_PERM << 28))
+ #define BOOT_TLBLO_ANGEL ((1 << SIZE_4K) | (DEVICE_TYPE << TLB_ENTRY_C_BITS) | (BOOT_TLB_PERM << 28))
+ #define SBIT_SIZE 1
+ #endif
+diff --git a/kernel/init/boot/boot.ref.S b/kernel/init/boot/boot.ref.S
+index a3d4c3e..d91159d 100644
+--- a/kernel/init/boot/boot.ref.S
++++ b/kernel/init/boot/boot.ref.S
+@@ -25,6 +25,11 @@
+ 
+ #define MAKE_TLBLO_DEV(DST,SRCVAL,TMPREG) \
+ 	SETCONST(DST,BOOT_TLBLO_DEV) ; \
++	TMPREG = lsr(SRCVAL, #  BOOT_TLB_OFFSET_BITS_4M); \
++	DST |= asl(TMPREG, #  BOOT_TLB_SHIFT_4M + SBIT_SIZE);
++
++#define MAKE_TLBLO_DEV_1M(DST,SRCVAL,TMPREG) \
++	SETCONST(DST,BOOT_TLBLO_DEV_1M) ; \
+ 	TMPREG = lsr(SRCVAL, #  BOOT_TLB_OFFSET_BITS_1M); \
+ 	DST |= asl(TMPREG, #  BOOT_TLB_SHIFT_1M + SBIT_SIZE);
+ 
+@@ -430,7 +435,7 @@ boot_continuation:
+ 	if (!p0) jump:t .Ltlb_init
+ 
+ 	// entry for L2 interrupt controller
+-	MAKE_TLBHI(TLB_HI, Q6_SS_BASE_VA, BOOT_TLB_OFFSET_BITS_1M, BOOT_TLB_SHIFT_1M)
++	MAKE_TLBHI(TLB_HI, Q6_SS_BASE_VA, BOOT_TLB_OFFSET_BITS_4M, BOOT_TLB_SHIFT_4M)
+ 	// SS_BASE == SSBASE (PRIV_BASE)
+ 	// apply offet to get PUB_BASE
+ 	SS_BASE = add(SS_BASE, ##-QDSP6SS_PUB_PRIV_OFFSET)
+@@ -451,7 +456,7 @@ boot_continuation:
+ 	CFG_IDX = #CFG_TABLE_L2REGS
+ 	L2_CFG_BASE = memw_phys(CFG_IDX, CFG_HI)
+ 	L2_CFG_BASE = asl(L2_CFG_BASE, #CFG_TABLE_SHIFT)
+-	MAKE_TLBLO_DEV(TLB_LO, L2_CFG_BASE, TLB_TMP)
++	MAKE_TLBLO_DEV_1M(TLB_LO, L2_CFG_BASE, TLB_TMP)
+ 	DO_TLBW
+ 
+ #ifndef NULL_ANGEL_TRAP
+diff --git a/kernel/util/max/max.h b/kernel/util/max/max.h
+index 78f1479..ebd0d77 100644
+--- a/kernel/util/max/max.h
++++ b/kernel/util/max/max.h
+@@ -99,14 +99,16 @@
+ 	 map QDSP6SS_PUB_BASE to Q6_SS_BASE_VA so we can get at the public registers.
+ 	 FIXME? Is the QDSP6SS_PUB_PRIV_OFFSET the same for all subsystems? */
+ 
+-#define DEVICE_PAGE_SIZE SIZE_1M
++#define DEVICE_PAGE_SIZE SIZE_4M
+ 
+ #define Q6_SS_BASE_VA 0xffc00000  // leaves at most 4M for tmpmap at 0xff800000
+ #define QDSP6SS_PUB_PRIV_OFFSET 0x80000
+ 
+-#define L2CFG_BASE_VA 0xffd00000
++/* Outside the 4M device window at Q6_SS_BASE_VA, or the two TLB entries both
++   match.  The kernel image ends below 0xff100000 and tmpmap starts at 0xff800000. */
++#define L2CFG_BASE_VA 0xff700000
+ 
+-#define ANGEL_VA 0xffe00000
++#define ANGEL_VA 0xff600000
+ #define ANGEL_PG_SIZE SIZE_4K
+ 
+ #if ARCHV == 4

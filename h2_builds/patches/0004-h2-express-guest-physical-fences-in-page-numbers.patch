@@ -1,0 +1,105 @@
+From 79c4fa339bb8da1828532de440a71dd5df89b343 Mon Sep 17 00:00:00 2001
+From: Brian Cain <brian.cain@oss.qualcomm.com>
+Date: Thu, 30 Jul 2026 15:42:43 -0500
+Subject: [PATCH] h2: express guest physical fences in page numbers
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 8bit
+
+SET_FENCES took u32_t byte addresses and shifted them down itself, which
+capped the physical range a guest could be given at 4GB - the FIXME the
+shift carried said as much.  Take page numbers instead, which is the unit
+H2K_offset_translate() compares against anyway, and hand the Linux guest
+the whole 16GB a varadix leaf entry can name.
+
+Callers convert at the call site; booter tracks its fences as addresses
+and keeps doing so.
+
+Signed-off-by: Brian Cain <brian.cain@oss.qualcomm.com>
+---
+ booter/booter.c                     |  5 ++++-
+ kernel/power/apcr/test_multi/test.c |  4 +++-
+ kernel/traps/config/config.ref.c    |  9 ++++++---
+ linux/loadlinux.c                   | 12 ++++++++++--
+ 4 files changed, 23 insertions(+), 7 deletions(-)
+
+diff --git a/booter/booter.c b/booter/booter.c
+index 6e18facf..b088a3c1 100644
+--- a/booter/booter.c
++++ b/booter/booter.c
+@@ -1116,7 +1116,10 @@ void config_vm(unsigned int idx) {
+ 	}
+ 
+ 	if (trans == H2K_ASID_TRANS_TYPE_OFFSET) {
+-		if (h2_config_vmblock_init(vm, SET_FENCES, vm_params[idx].fence_lo, vm_params[idx].fence_hi) != vm) {
++		/* SET_FENCES takes page numbers; booter tracks fences as addresses. */
++		if (h2_config_vmblock_init(vm, SET_FENCES,
++					   vm_params[idx].fence_lo >> PAGE_BITS,
++					   vm_params[idx].fence_hi >> PAGE_BITS) != vm) {
+ 			FAIL("\tSET_FENCES", "");
+ 		}
+ 	}
+diff --git a/kernel/power/apcr/test_multi/test.c b/kernel/power/apcr/test_multi/test.c
+index 9e43d305..59e78641 100644
+--- a/kernel/power/apcr/test_multi/test.c
++++ b/kernel/power/apcr/test_multi/test.c
+@@ -134,7 +134,9 @@ int main()
+ 
+ 	vm = h2_config_vmblock_init(0,SET_CPUS_INTS, TASKS + 1, 0);
+ 	h2_config_vmblock_init(vm, SET_PMAP_TYPE, (unsigned int)offset.raw, H2K_ASID_TRANS_TYPE_OFFSET);
+-	h2_config_vmblock_init(vm, SET_FENCES, (unsigned long)__bootvm_entry_point, 0xffffffff & BOOT_TLB_PAGE_MASK);
++	h2_config_vmblock_init(vm, SET_FENCES,
++			       (unsigned long)__bootvm_entry_point >> PAGE_BITS,
++			       (0xffffffff & BOOT_TLB_PAGE_MASK) >> PAGE_BITS);
+ 	h2_config_vmblock_init(vm, SET_PRIO_TRAPMASK, 0x0, 0xffffffff);
+ 
+ 	h2_vmboot(vmmain, &main_thread_stack[STACK_SIZE - 1], 0, 0, vm);
+diff --git a/kernel/traps/config/config.ref.c b/kernel/traps/config/config.ref.c
+index 34157434..c4840886 100644
+--- a/kernel/traps/config/config.ref.c
++++ b/kernel/traps/config/config.ref.c
+@@ -215,9 +215,12 @@ static u32_t H2K_config_vmblock_init_set_fences(H2K_vmblock_t *vmblock, u32_t vm
+ 	H2K_offset_t offset;
+ 	/* Ensure that fences are at given page boundaries */
+ 	offset = vmblock->phys_offset;
+-	/* EJP: FIXME: should probably be in page numbers anyway to allow >32 bit pa */
+-	arg1 >>= PAGE_BITS;
+-	arg2 >>= PAGE_BITS;
++	/*
++	 * Fences arrive as page numbers rather than byte addresses so that a
++	 * guest can be given physical memory beyond the 4GB a u32_t byte
++	 * address could name.  The permitted range is compared against
++	 * translated page numbers in H2K_offset_translate() either way.
++	 */
+ 	if (((arg1|arg2) & ((1<<(2*offset.size))-1)) != 0) return 0;
+ 	vmblock->fence_lo = arg1;
+ 	vmblock->fence_hi = arg2;
+diff --git a/linux/loadlinux.c b/linux/loadlinux.c
+index 7abddeea..88eb58c7 100644
+--- a/linux/loadlinux.c
++++ b/linux/loadlinux.c
+@@ -34,6 +34,15 @@
+ 
+ #define VM_STATUS_REBOOT 3
+ 
++/*
++ * Highest physical page Linux may reach, as the base page number of the
++ * last 4MB fence granule.  A varadix leaf entry carries a 22-bit page
++ * number in 4KB granules, so 16GB is the most any guest page table can
++ * name; hand Linux the whole of it and let the memory map in the device
++ * tree decide what is actually populated.
++ */
++#define LINUX_FENCE_HI ((1u << 22) - (1u << 10))
++
+ H2K_offset_t linux_offset = {{
+ 	.size = SIZE_4M,
+ 	.cccc = L1WB_L2C,
+@@ -85,8 +94,7 @@ unsigned long vm_setup(char num_cpus, short num_ints, u32_t trans, unsigned long
+ 
+ 	if (pt == H2K_ASID_TRANS_TYPE_OFFSET) {
+ 		/* Memory map:  0 ... Linux ... frame buffer ... H2 ... boot VM ... ucos */
+-		//		ret = h2_config_vmblock_init(vm, SET_FENCES, 0x0, FRAME_BUFFER);
+-		ret = h2_config_vmblock_init(vm, SET_FENCES, 0x0, 0xfe000000);
++		ret = h2_config_vmblock_init(vm, SET_FENCES, 0x0, LINUX_FENCE_HI);
+ 		if (ret != vm) {
+ 			PRINTF("ret %08x\n", (unsigned int)ret);
+ 			FAIL("SET_FENCES");

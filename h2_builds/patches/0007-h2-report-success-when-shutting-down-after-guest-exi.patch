@@ -1,0 +1,82 @@
+From a9a74fc10984716feacb1ada3e80f37367a10af3 Mon Sep 17 00:00:00 2001
+From: Brian Cain <brian.cain@oss.qualcomm.com>
+Date: Sun, 4 Oct 2026 15:03:47 -0500
+Subject: [PATCH] h2: report success when shutting down after guest exit
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 8bit
+
+QEMU exits with thread 0's r2 once every hw thread has stopped.  Zero r2
+before stop() on the SHUTDOWN_AFTER_GUEST_EXIT shutdown path, both in the
+thread that brings the machine down and in the NMI_STOP handler that
+stops the others, so a graceful guest exit yields exit code 0 whichever
+thread stops last.
+
+Signed-off-by: Brian Cain <brian.cain@oss.qualcomm.com>
+---
+ kernel/event/error/error.ref.S |  3 +++
+ kernel/thread/stop/stop.ref.c  | 16 +++++++++++-----
+ 2 files changed, 14 insertions(+), 5 deletions(-)
+
+diff --git a/kernel/event/error/error.ref.S b/kernel/event/error/error.ref.S
+index 1b392303..d3849607 100644
+--- a/kernel/event/error/error.ref.S
++++ b/kernel/event/error/error.ref.S
+@@ -191,6 +191,9 @@ FUNC_END H2K_fatal_crash
+ FUNC_START H2K_handle_nmi .text.vm.error .p2align 2
+ #ifdef NMI_STOP
+ 	r1=##0xe0f0beef
++#ifdef SHUTDOWN_AFTER_GUEST_EXIT
++	r2=#0
++#endif
+ 	stop(r0)
+ #else
+ 
+diff --git a/kernel/thread/stop/stop.ref.c b/kernel/thread/stop/stop.ref.c
+index 9d0ad411..907acad3 100644
+--- a/kernel/thread/stop/stop.ref.c
++++ b/kernel/thread/stop/stop.ref.c
+@@ -27,6 +27,10 @@
+  * stop() via the NMI_STOP handler (which this build option pulls in), then
+  * stop this hw thread too.  Never returns.
+  *
++ * A graceful shutdown reports success: QEMU exits with thread 0's r2 once
++ * every hw thread has stopped, so r2 is zeroed before each stop() -- here
++ * and in the NMI_STOP handler -- whichever thread ends up stopping last.
++ *
+  * Deliberately targets MAX_HTHREADS_MASK (every hw thread this build can
+  * possibly have started) rather than H2K_gp->hthreads_mask: the latter is
+  * a one-shot modectl readback taken right after hwthreads_mask() issues
+@@ -35,8 +39,8 @@
+  * race, not a complete picture.  NMI-ing a thread that was never started
+  * is a harmless no-op.
+  */
+-static void H2K_hw_shutdown(s32_t status) __attribute__((noreturn));
+-static void H2K_hw_shutdown(s32_t status)
++static void H2K_hw_shutdown(void) __attribute__((noreturn));
++static void H2K_hw_shutdown(void)
+ {
+ 	u32_t others_mask = MAX_HTHREADS_MASK & ~(1u << get_hwtnum());
+ 
+@@ -50,9 +54,11 @@ static void H2K_hw_shutdown(s32_t status)
+ 	for (;;) {
+ 		asm volatile
+ 			(
+-			 " stop(%0)\n"
++			 " r2 = #0\n"
++			 " stop(r2)\n"
+ 			 :
+-			 : "r"(status)
++			 :
++			 : "r2"
+ 			 );
+ 	}
+ }
+@@ -91,7 +97,7 @@ void H2K_thread_stop_withlock(s32_t status, H2K_thread_context *me)
+ 			H2K_mem_alloc_free(vmblock);
+ #ifdef SHUTDOWN_AFTER_GUEST_EXIT
+ 			BKL_UNLOCK();
+-			H2K_hw_shutdown(status);
++			H2K_hw_shutdown();
+ 			/* NOTREACHED */
+ #endif
+ 		}
