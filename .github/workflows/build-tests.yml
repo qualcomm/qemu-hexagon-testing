@@ -15,15 +15,18 @@ env:
   SDK_VERSION: "6.7.0.0"
   HEXAGON_TOOLS_VER: "21.0.04"
 
+permissions:
+  contents: read
+
 jobs:
   build-tests:
     runs-on: ubuntu-22.04
-    permissions:
-      contents: write
 
     steps:
     - name: Checkout repository
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
 
     - name: Install dependencies
       run: |
@@ -438,6 +441,8 @@ jobs:
     steps:
     - name: Checkout repository
       uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      with:
+        persist-credentials: false
 
     - name: Install dependencies
       run: |
@@ -473,6 +478,46 @@ jobs:
         path: h2_builds/build/dist/*
         retention-days: 90
 
+  test-h2-qurt:
+    runs-on: ubuntu-22.04
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      with:
+        persist-credentials: false
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        # libncurses5 is needed by the SDK's hexagon-clang
+        sudo apt-get install -y build-essential wget unzip python3 libncurses5
+
+    - name: Download Hexagon SDK
+      run: |
+        wget -q -O hexagon_sdk.zip "$SDK_URL"
+        unzip -q hexagon_sdk.zip
+        rm hexagon_sdk.zip
+        test -d "Hexagon_SDK/$SDK_VERSION"
+
+    - name: h2 functional tests on hexagon-sim
+      working-directory: h2_tests
+      run: make SDK="$GITHUB_WORKSPACE/Hexagon_SDK/$SDK_VERSION" check
+
+    - name: QuRT functional tests on hexagon-sim
+      working-directory: qurt_tests
+      run: make SDK="$GITHUB_WORKSPACE/Hexagon_SDK/$SDK_VERSION" check
+
+    - name: Archive test logs
+      if: always()
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: h2-qurt-test-logs
+        path: |
+          h2_tests/build/v*/logs
+          qurt_tests/build/*/logs
+        retention-days: 14
+
   create-release:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [build-tests, build-h2]
@@ -485,6 +530,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Get tag name
         id: get_tag
