@@ -1,0 +1,3 @@
+# Tests that currently fail on qemu-system-hexagon.  Format: <test> <reason>
+# These are reported as XFAIL and do not make `make check-qemu` fail.
+h2_functional  h2 timer interrupt (l2vic int 34) never reaches the guest on qemu; h2_nanosleep() blocks forever
