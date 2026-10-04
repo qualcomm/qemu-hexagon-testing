@@ -1,0 +1,3 @@
+# Tests that currently fail on qemu-system-hexagon.  Format: <test>[:<arch>] <reason>
+# These are reported as XFAIL and do not make `make check-qemu` fail.
+qurt_functional:v68  qemu's v68 HMX gives the v73 result for weight/activation pattern 1; hexagon-sim v68 differs
