@@ -1,0 +1,148 @@
+From 167e4be5eee3b2be7b92cec79cb16b05bb8380c8 Mon Sep 17 00:00:00 2001
+From: Brian Cain <brian.cain@oss.qualcomm.com>
+Date: Fri, 17 Jul 2026 22:18:50 -0500
+Subject: [PATCH] h2: add SHUTDOWN_AFTER_GUEST_EXIT build option
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 8bit
+
+When the root VM (the boot VM, which has no parent) drains its last CPU,
+H2K_thread_stop() previously just freed the vmblock and idled the calling
+hw thread forever.
+
+Add an opt-in SHUTDOWN_AFTER_GUEST_EXIT build option that brings the
+physical machine down on root-guest exit: loadlinux issues a final
+vm_stop once Linux is done (not rebooting), and H2K_thread_stop()'s
+no-parent path broadcasts an NMI to every other hw thread (parked in
+wait()) and then stops itself.  The option pulls in NMI_STOP so the woken
+threads execute stop() straight from the NMI handler.
+
+Signed-off-by: Brian Cain <brian.cain@oss.qualcomm.com>
+---
+ kernel/Makefile               |  7 ++++++
+ kernel/thread/stop/stop.ref.c | 46 +++++++++++++++++++++++++++++++++++
+ linux/loadlinux.c             | 15 ++++++++++++
+ linux/makefile                |  4 +++
+ 4 files changed, 72 insertions(+)
+
+diff --git a/kernel/Makefile b/kernel/Makefile
+index 394fb41b..e6812b72 100644
+--- a/kernel/Makefile
++++ b/kernel/Makefile
+@@ -25,6 +25,13 @@ ifdef NULL_ANGEL_TRAP
+ CFLAGS += -DNULL_ANGEL_TRAP
+ endif
+ 
++# Bring the physical machine down when the root guest exits.
++# Pulls in NMI_STOP so the idle hw threads woken by the shutdown
++# broadcast execute stop() from the NMI handler.
++ifdef SHUTDOWN_AFTER_GUEST_EXIT
++CFLAGS += -DSHUTDOWN_AFTER_GUEST_EXIT -DNMI_STOP
++endif
++
+ ifdef DEBUG
+ CFLAGS += -DDEBUG
+ endif
+diff --git a/kernel/thread/stop/stop.ref.c b/kernel/thread/stop/stop.ref.c
+index e77bfc2a..9d0ad411 100644
+--- a/kernel/thread/stop/stop.ref.c
++++ b/kernel/thread/stop/stop.ref.c
+@@ -17,6 +17,47 @@
+ #include <id.h>
+ #include <alloc.h>
+ 
++#ifdef SHUTDOWN_AFTER_GUEST_EXIT
++/*
++ * The root VM (no parent -- H2K_id_to_context() on vmblock->parent returns
++ * NULL only for the boot VM, since vmblocks[0] is never assigned) has just
++ * drained its last CPU: nobody is left to hand control back to, so bring
++ * the physical machine down instead of idling forever.  The other hw
++ * threads are parked in wait(); wake them all with an NMI so each executes
++ * stop() via the NMI_STOP handler (which this build option pulls in), then
++ * stop this hw thread too.  Never returns.
++ *
++ * Deliberately targets MAX_HTHREADS_MASK (every hw thread this build can
++ * possibly have started) rather than H2K_gp->hthreads_mask: the latter is
++ * a one-shot modectl readback taken right after hwthreads_mask() issues
++ * async start requests to the other threads, so it only reflects whichever
++ * threads had already flipped their own enable bit by that point -- a
++ * race, not a complete picture.  NMI-ing a thread that was never started
++ * is a harmless no-op.
++ */
++static void H2K_hw_shutdown(s32_t status) __attribute__((noreturn));
++static void H2K_hw_shutdown(s32_t status)
++{
++	u32_t others_mask = MAX_HTHREADS_MASK & ~(1u << get_hwtnum());
++
++	asm volatile
++		(
++		 " nmi(%0)\n"
++		 :
++		 : "r"(others_mask)
++		 );
++
++	for (;;) {
++		asm volatile
++			(
++			 " stop(%0)\n"
++			 :
++			 : "r"(status)
++			 );
++	}
++}
++#endif
++
+ void H2K_thread_stop(s32_t status, H2K_thread_context *me)
+ {
+ 	BKL_LOCK();
+@@ -48,6 +89,11 @@ void H2K_thread_stop_withlock(s32_t status, H2K_thread_context *me)
+ 			/* Can't free immediately because H2K_switch reads from *me */
+ 			/* EJP: I think this is OK now if we dosched(NULL,htnum)? */
+ 			H2K_mem_alloc_free(vmblock);
++#ifdef SHUTDOWN_AFTER_GUEST_EXIT
++			BKL_UNLOCK();
++			H2K_hw_shutdown(status);
++			/* NOTREACHED */
++#endif
+ 		}
+ 	}
+ 	/* If we dosched(NULL,get_hwtnum()) I think we can remove special cases in free() */
+diff --git a/linux/loadlinux.c b/linux/loadlinux.c
+index b462fb7f..7abddeea 100644
+--- a/linux/loadlinux.c
++++ b/linux/loadlinux.c
+@@ -346,5 +346,20 @@ int main(int argc, char *argv[]) {
+ 		h2_vmfree(linux_vm);
+ 	} while (status == VM_STATUS_REBOOT);
+ 
++#ifdef SHUTDOWN_AFTER_GUEST_EXIT
++	/*
++	 * Linux is done for good (not rebooting).  Ask H2 to stop this (the
++	 * root, parentless) VM: H2K_thread_stop() recognizes there's no
++	 * parent left to hand control back to and brings the physical
++	 * machine down (stop() on every hw thread) instead of idling
++	 * forever.  Does not return.
++	 *
++	 * Without this build option the guest-exit path falls through to the
++	 * angel SYS_EXIT trap below, which exits a simulator -- but is a no-op
++	 * under NULL_ANGEL_TRAP (e.g. QEMU), leaving the machine spinning.
++	 */
++	h2_vmtrap_stop(status);
++#endif
++
+ 	return 0; // make gcc happy
+ }
+diff --git a/linux/makefile b/linux/makefile
+index f20a228a..15473dab 100644
+--- a/linux/makefile
++++ b/linux/makefile
+@@ -97,6 +97,10 @@ ifneq ($(NO_LOAD),)
+ CFLAGS += -DNO_LOAD
+ endif
+ 
++ifneq ($(SHUTDOWN_AFTER_GUEST_EXIT),)
++CFLAGS += -DSHUTDOWN_AFTER_GUEST_EXIT
++endif
++
+ ifneq ($(NO_STLB),)
+ CFLAGS += -DNO_STLB
+ endif

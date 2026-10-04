@@ -1,0 +1,62 @@
+From 7a716b8fd9ddefc11b2e02752a5f7d4b86a954cf Mon Sep 17 00:00:00 2001
+From: Brian Cain <brian.cain@oss.qualcomm.com>
+Date: Fri, 25 Sep 2026 14:25:56 -0500
+Subject: [PATCH] h2: loadlinux: give the Linux VM a VCPU for every running
+ hardware thread
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 8bit
+
+The Linux VM was always created with four VCPUs, however many hardware
+threads the core has.  Size it from the mask of running hardware threads
+that h2 reports, which is what the guest sees through the info call too,
+so that a guest can use all of the core.
+
+The interrupt routing that setup_ints() does follows the VCPU count.
+
+Signed-off-by: Brian Cain <brian.cain@oss.qualcomm.com>
+---
+ linux/loadlinux.c | 13 +++++++++----
+ 1 file changed, 9 insertions(+), 4 deletions(-)
+
+diff --git a/linux/loadlinux.c b/linux/loadlinux.c
+index 88eb58c7..b17efbbc 100644
+--- a/linux/loadlinux.c
++++ b/linux/loadlinux.c
+@@ -21,7 +21,6 @@
+ #include <stdlib.h>
+ #include <string.h>
+ 
+-#define LINUX_NUM_VCPU 4
+ #define UCOS_NUM_VCPU 1
+ 
+ #define TOTAL_INTS 288
+@@ -50,7 +49,7 @@ H2K_offset_t linux_offset = {{
+ 	.pages = (LINUX_OFFSET_ADDR >> PAGE_BITS)
+ 	}};
+ 
+-unsigned long long int linux_vcpu_stacks[LINUX_NUM_VCPU][VCPU_STACK_SIZE];
++unsigned long long int linux_vcpu_stacks[MAX_HTHREADS][VCPU_STACK_SIZE];
+ unsigned long long int ucos_vcpu_stacks[UCOS_NUM_VCPU][VCPU_STACK_SIZE];
+ 
+ #ifdef NO_PRINT
+@@ -178,12 +177,18 @@ static unsigned long boot_dtb_addr(void) {
+ unsigned long boot_linux(char fname[]) {
+ 
+ 	unsigned long linux_vm = 0;
++	int num_vcpus;
+ 
+ #ifdef LINUX
+ 	PRINTF("linux: start boot\n");
+ 
+-	linux_vm = vm_setup(LINUX_NUM_VCPU, SHARED_INTS, linux_offset.raw, 0x1, H2K_ASID_TRANS_TYPE_OFFSET);
+-	setup_ints(linux_vm, LINUX_NUM_VCPU);
++	/* One VCPU for every hardware thread that is running. */
++	num_vcpus = __builtin_popcount(h2_info(INFO_HTHREADS) & ((1u << MAX_HTHREADS) - 1));
++	if (num_vcpus == 0) num_vcpus = 1;
++	PRINTF("linux: %d VCPUs\n", num_vcpus);
++
++	linux_vm = vm_setup(num_vcpus, SHARED_INTS, linux_offset.raw, 0x1, H2K_ASID_TRANS_TYPE_OFFSET);
++	setup_ints(linux_vm, num_vcpus);
+ 	PRINTF("linux: vm set up\n");
+ 
+ #ifndef NO_LOAD

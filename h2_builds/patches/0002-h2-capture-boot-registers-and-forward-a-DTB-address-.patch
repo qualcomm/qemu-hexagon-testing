@@ -1,0 +1,181 @@
+From b40015d8c0eb8c3912e2fc29f99607649103fe46 Mon Sep 17 00:00:00 2001
+From: Brian Cain <brian.cain@oss.qualcomm.com>
+Date: Thu, 2 Jul 2026 13:27:36 -0500
+Subject: [PATCH] h2: capture boot registers and forward a DTB address to the
+ Linux guest
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 8bit
+
+Platform boot firmware may hand the kernel boot parameters in r1:0 at
+reset; the QEMU virt machine's built-in boot shim passes the generated
+device tree blob's physical address there.  Those registers were
+clobbered during early init, so guests could never see them and fell
+back to built-in device trees.
+
+Reserve a boot parameter block at a fixed offset in the entry page --
+alongside the angel mailbox area, and patchable by external tooling --
+and capture r1:0 into it on the boot thread before anything clobbers
+them.  Expose the captured values through two new info-trap operations,
+INFO_BOOT_R00 and INFO_BOOT_R01, appended to the enum to preserve the
+existing ABI.
+
+loadlinux reads them, validates the address (alignment plus FDT magic),
+and passes it as the vmboot argument, which lands in the guest's r1:0
+per the existing thread-create convention.  The Linux kernel's RISC-V
+style boot protocol picks the DTB address up from there and adopts the
+generated device tree.
+
+Signed-off-by: Brian Cain <brian.cain@oss.qualcomm.com>
+---
+ kernel/init/boot/boot.h         |  8 ++++++++
+ kernel/init/boot/boot.ref.S     | 30 ++++++++++++++++++++++++++++++
+ kernel/traps/info/info.ref.c    |  9 ++++++++-
+ libs/h2/common/h2_common_info.h |  2 ++
+ linux/loadlinux.c               | 27 ++++++++++++++++++++++++++-
+ 5 files changed, 74 insertions(+), 2 deletions(-)
+
+diff --git a/kernel/init/boot/boot.h b/kernel/init/boot/boot.h
+index f76be84e..39693342 100644
+--- a/kernel/init/boot/boot.h
++++ b/kernel/init/boot/boot.h
+@@ -50,4 +50,12 @@
+ #define SBIT_SIZE 1
+ #endif
+ 
++#if !defined(ASM) && !defined(__ASSEMBLER__)
++/*
++ * Boot parameter block in the entry page (see boot.ref.S): r1:0 as
++ * captured at reset on the boot thread, followed by reserved pad.
++ */
++extern unsigned int h2_boot_params[];
++#endif
++
+ #endif
+diff --git a/kernel/init/boot/boot.ref.S b/kernel/init/boot/boot.ref.S
+index c20511e7..ae3e2103 100644
+--- a/kernel/init/boot/boot.ref.S
++++ b/kernel/init/boot/boot.ref.S
+@@ -73,7 +73,37 @@ FUNC_START start .entry .p2align 12
+ 	jump .Lpast_mbox
+ 	.space 0x200  // FIXME: needs to be enough for all angel mailboxes but still fit all code in 4K
+ 
++	/*
++	 * Boot parameter block: lives at a fixed offset in the entry page
++	 * so that boot firmware or external tooling can locate and patch
++	 * it.  The first two words capture r1:0 as they were at reset on
++	 * the boot thread; platforms like the QEMU virt machine pass the
++	 * device tree blob physical address there for forwarding to a
++	 * guest.  The remaining pad is reserved for future parameters or
++	 * a patched-in platform-specific boot stub.
++	 */
++	.p2align 3
++	.globl h2_boot_params
++h2_boot_params:
++	.word 0		// r0 at entry (e.g. DTB physical address, low)
++	.word 0		// r1 at entry (e.g. DTB physical address, high)
++	.space 0x38	// reserved
++
+ .Lpast_mbox:
++	/*
++	 * Capture r1:0 into the boot parameter block before anything
++	 * clobbers them.  Only the boot thread's values are meaningful;
++	 * secondary hardware threads also enter here when started later.
++	 */
++	r10 = HTID
++	{
++		p0 = cmp.eq(r10,#0)
++		if (!p0.new) jump:nt .Lpast_bootparam_capture
++	}
++	r10 = add(PC,##h2_boot_params@PCREL)
++	memd(r10+#0) = r1:0
++	dccleana(r10)	// reach memory before the cache kill below
++.Lpast_bootparam_capture:
+ 
+ #ifdef CRASH_DEBUG
+ 	r7 = PC
+diff --git a/kernel/traps/info/info.ref.c b/kernel/traps/info/info.ref.c
+index a8bd4492..38e24e85 100644
+--- a/kernel/traps/info/info.ref.c
++++ b/kernel/traps/info/info.ref.c
+@@ -11,6 +11,7 @@
+ #include <symbols.h>
+ #include <cfg_table.h>
+ #include <log.h>
++#include <boot.h>
+ 
+ u32_t H2K_trap_info(info_type op, u32_t unit, h2_cfg_unit_entry entry, H2K_thread_context *me) {
+ 
+@@ -195,7 +196,13 @@ u32_t H2K_trap_info(info_type op, u32_t unit, h2_cfg_unit_entry entry, H2K_threa
+ 	
+ 	case INFO_NOC_SBASE:
+ 	return H2K_gp->noc_sbase;
+-	
++
++	case INFO_BOOT_R00:
++		return h2_boot_params[0];
++
++	case INFO_BOOT_R01:
++		return h2_boot_params[1];
++
+ default:
+ 		return -1;
+ 	}
+diff --git a/libs/h2/common/h2_common_info.h b/libs/h2/common/h2_common_info.h
+index 08f6dcaf..85fb6a8d 100644
+--- a/libs/h2/common/h2_common_info.h
++++ b/libs/h2/common/h2_common_info.h
+@@ -53,6 +53,8 @@ typedef enum {
+ 	INFO_TCM_OFFSET,  /**< Multicore TCM base offset */
+ 	INFO_NOC_MBASE,   /**< Multicore NOC master widget base */
+ 	INFO_NOC_SBASE,   /**< Multicore NOC slave widget base */
++	INFO_BOOT_R00,    /**< r0 at reset on the boot thread (e.g. DTB address, low) */
++	INFO_BOOT_R01,    /**< r1 at reset on the boot thread (e.g. DTB address, high) */
+ 	INFO_MAX
+ } info_type;
+ 
+diff --git a/linux/loadlinux.c b/linux/loadlinux.c
+index ca887058..b462fb7f 100644
+--- a/linux/loadlinux.c
++++ b/linux/loadlinux.c
+@@ -145,6 +145,28 @@ void boot_ucos() {
+ #endif
+ }
+ 
++/*
++ * The platform bootloader may have passed a device tree blob address in
++ * r1:0 at reset (e.g. the QEMU virt machine's boot shim); h2 captures
++ * those registers in its entry page.  Return the DTB physical address
++ * if one was passed and looks valid, else 0.
++ */
++static unsigned long boot_dtb_addr(void) {
++
++	unsigned long r0 = h2_info(INFO_BOOT_R00);
++	unsigned long r1 = h2_info(INFO_BOOT_R01);
++
++	if (r1 != 0 || r0 == 0 || (r0 & 3) != 0)
++		return 0;
++
++	if (*(volatile unsigned long *)r0 != 0xedfe0dd0) { /* FDT magic, LE view */
++		PRINTF("linux: no FDT magic at 0x%08lx\n", r0);
++		return 0;
++	}
++
++	return r0;
++}
++
+ unsigned long boot_linux(char fname[]) {
+ 
+ 	unsigned long linux_vm = 0;
+@@ -198,8 +220,11 @@ unsigned long boot_linux(char fname[]) {
+ 		 );
+ #endif
+ 
++	unsigned long dtb = boot_dtb_addr();
++	PRINTF("linux: dtb at 0x%08lx\n", dtb);
++
+ 	if (h2_vmboot(linux_stext, &linux_vcpu_stacks[0][VCPU_STACK_SIZE - 1],
+-								0, LINUX_VM_PRIO, linux_vm) == -1) FAIL("linux vmboot");
++								dtb, LINUX_VM_PRIO, linux_vm) == -1) FAIL("linux vmboot");
+ 
+ 	PRINTF ("linux: booted\n");
+ #endif
