@@ -19,8 +19,8 @@ cfg=$here/configs/$machine.mk
 
 SDK=${SDK:-/opt/Hexagon_SDK/6.4.0.2}
 TOOLS=${TOOLS:-$SDK/tools/HEXAGON_Tools/19.0.04/Tools}
-H2_REPO=${H2_REPO:-https://github.com/qualcomm/hexagon-hypervisor}
-H2_REF=${H2_REF:-master}
+H2_REPO=${H2_REPO:-https://github.com/androm3da/hexagon-hypervisor}
+H2_REF=${H2_REF:-bcain/qemu_boot}
 H2_SRC=${H2_SRC:-$here/build/h2-src}
 export PATH=$TOOLS/bin:$PATH
 

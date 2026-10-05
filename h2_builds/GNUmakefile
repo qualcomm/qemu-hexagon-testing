@@ -6,8 +6,8 @@
 #   make package               # build/dist/* and build/h2-builds.tar.gz
 #   make list
 
-H2_REPO ?= https://github.com/qualcomm/hexagon-hypervisor
-H2_REF  ?= master
+H2_REPO ?= https://github.com/androm3da/hexagon-hypervisor
+H2_REF  ?= bcain/qemu_boot
 H2_SRC  ?= $(CURDIR)/build/h2-src
 export H2_SRC H2_REPO H2_REF
 
