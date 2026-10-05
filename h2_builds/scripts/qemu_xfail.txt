@@ -1,0 +1,10 @@
+# Machines on which h2 does not run under QEMU, with the reason.  run_tests.sh
+# expects these to fail and reports an unexpected pass.
+#
+# h2's boot code maps the public subsystem block (private base - 0x80000) with
+# a 1MB page, so it needs the private base to be 0x80000 modulo 1MB.  These
+# machines put it at 0xfc900000 / 0x20000000, so h2 reads the l2vic and qtimer
+# at the wrong place: its timer never fires and the first sleep hangs.
+V68N_1024
+V81DGB_1
+V81QA_1

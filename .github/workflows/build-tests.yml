@@ -403,9 +403,50 @@ jobs:
         path: qemu-qurt-tests-sdk-v81.tar.gz
         retention-days: 90
 
+  build-h2:
+    runs-on: ubuntu-22.04
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        # libncurses5 is needed by the SDK's hexagon-clang; rsync by h2_builds
+        sudo apt-get install -y build-essential wget unzip rsync python3 libncurses5
+
+    - name: Download Hexagon SDK
+      run: |
+        wget -q -O hexagon_sdk.zip "$SDK_URL"
+        unzip -q hexagon_sdk.zip
+        rm hexagon_sdk.zip
+        test -d "Hexagon_SDK/$SDK_VERSION"
+
+    - name: Build h2 for every QEMU machine
+      working-directory: h2_builds
+      run: |
+        # booter for every machine, loadlinux for the real ones.
+        make -j"$(nproc)" SDK="$GITHUB_WORKSPACE/Hexagon_SDK/$SDK_VERSION" package
+        cat build/dist/placements.txt
+
+    - name: Archive h2 builds (tarball)
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: h2-builds-package
+        path: h2_builds/build/h2-builds.tar.gz
+        retention-days: 90
+
+    - name: Archive h2 builds (individual files)
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: h2-builds-files
+        path: h2_builds/build/dist/*
+        retention-days: 90
+
   create-release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: build-tests
+    needs: [build-tests, build-h2]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -426,6 +467,12 @@ jobs:
           path: artifacts/
           pattern: '*-package'
           merge-multiple: true
+
+      - name: Download h2 build files
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: h2-builds-files
+          path: h2-files/
 
       - name: List downloaded artifacts
         run: |
@@ -460,4 +507,4 @@ jobs:
           gh release create "$TAG_NAME" \
             --title "Release $TAG_NAME" \
             --notes "$CHANGELOG" \
-            artifacts/*.tar.gz
+            artifacts/*.tar.gz h2-files/*
