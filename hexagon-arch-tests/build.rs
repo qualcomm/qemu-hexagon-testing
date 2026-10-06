@@ -6,18 +6,21 @@ use std::path::PathBuf;
 use std::process::Command;
 
 fn main() {
+    println!("cargo::rustc-check-cfg=cfg(dma_layout_before_4)");
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let asm_dir = manifest_dir.join("asm");
 
     let clang = env::var("HEXAGON_CLANG").unwrap_or_else(|_| "hexagon-clang".to_string());
+    let arch = env::var("HEXAGON_ARCH").unwrap_or_else(|_| "81".to_string());
+    let march = format!("-mv{arch}");
 
     // Compile crt0.S
     let crt0_src = asm_dir.join("crt0.S");
     let crt0_obj = out_dir.join("crt0.o");
 
     let status = Command::new(&clang)
-        .args(["-mv81", "-G0", "-c", "-o"])
+        .args([march.as_str(), "-G0", "-c", "-o"])
         .arg(&crt0_obj)
         .arg(&crt0_src)
         .status()
@@ -29,7 +32,7 @@ fn main() {
     let pte_obj = out_dir.join("pte.o");
 
     let status = Command::new(&clang)
-        .args(["-mv81", "-G0", "-c", "-o"])
+        .args([march.as_str(), "-G0", "-c", "-o"])
         .arg(&pte_obj)
         .arg(&pte_src)
         .status()
@@ -49,4 +52,5 @@ fn main() {
     println!("cargo:rerun-if-changed=asm/pte.S");
     println!("cargo:rerun-if-changed=hexagon.ld");
     println!("cargo:rerun-if-env-changed=HEXAGON_CLANG");
+    println!("cargo:rerun-if-env-changed=HEXAGON_ARCH");
 }

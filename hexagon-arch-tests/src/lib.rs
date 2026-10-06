@@ -81,6 +81,8 @@ pub const CFGTABLE_SUBSYSTEM_BASE: u32 = 0x08;
 pub const CFGTABLE_COPROC_PRESENT: u32 = 0x30;
 pub const CFGTABLE_EXT_CONTEXTS: u32 = 0x34;
 pub const CFGTABLE_THREAD_ENABLE_MASK: u32 = 0x48;
+/// User DMA version. Zero means no User DMA is implemented.
+pub const CFGTABLE_DMA_VERSION: u32 = 0x68;
 
 // ---------------------------------------------------------------------------
 // QTimer device constants
