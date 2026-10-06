@@ -82,3 +82,6 @@ path = "src/bin/test_int_steering.rs"
 name = "test_hvx_context"
 path = "src/bin/test_hvx_context.rs"
 
+[[bin]]
+name = "test_dma"
+path = "src/bin/test_dma.rs"
