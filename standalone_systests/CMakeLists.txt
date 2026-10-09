@@ -94,6 +94,7 @@ set(STANDALONE_PROGRAMS
     reg-writes
     rev
     semihost
+    semihost_read_replay
     standalone_hw
     standalone_vec
     start
@@ -175,6 +176,38 @@ endfunction()
 foreach(PROGRAM ${STANDALONE_PROGRAMS})
     add_systest_program(${PROGRAM})
 endforeach()
+
+# hexagon-sim reference runs.
+#
+# semihost_read_replay is run twice because hexagon-sim's SYS_READ handles the
+# guest buffer differently with an OS awareness model (--rtos) loaded: without
+# one it stores at PA == VA and ignores the TLB, with one it translates
+# through the TLB.  The test has a mode for each; see the comment at the top
+# of src/semihost_read_replay.c.
+enable_testing()
+
+get_filename_component(HEXAGON_SIM_DIR ${CMAKE_C_COMPILER} DIRECTORY)
+set(HEXAGON_SIM ${HEXAGON_SIM_DIR}/hexagon-sim
+    CACHE FILEPATH "hexagon-sim executable")
+set(HEXAGON_OSAM_MODEL
+    ${HEXAGON_SDK_ROOT}/rtos/qurt/compute${HEXAGON_ARCH}/debugger/lnx64/qurt_model.so
+    CACHE FILEPATH "OS awareness model passed to hexagon-sim --rtos")
+file(WRITE ${CMAKE_BINARY_DIR}/osam.cfg "${HEXAGON_OSAM_MODEL}\n")
+
+if(TARGET semihost_read_replay)
+    add_test(NAME semihost_read_replay_sim
+        COMMAND ${HEXAGON_SIM} -m${HEXAGON_ARCH} --simulated_returnval
+            $<TARGET_FILE:semihost_read_replay>
+        WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    add_test(NAME semihost_read_replay_sim_osam
+        COMMAND ${HEXAGON_SIM} -m${HEXAGON_ARCH} --simulated_returnval
+            --rtos ${CMAKE_BINARY_DIR}/osam.cfg
+            $<TARGET_FILE:semihost_read_replay> -- mapped
+        WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    # Both runs create the same scratch file in the working directory.
+    set_tests_properties(semihost_read_replay_sim semihost_read_replay_sim_osam
+        PROPERTIES TIMEOUT 600 RESOURCE_LOCK semihost_read_replay_file)
+endif()
 
 # standalone_hw needs the test_set_prio symbol from monitor_insts.S.
 if(TARGET standalone_hw)
