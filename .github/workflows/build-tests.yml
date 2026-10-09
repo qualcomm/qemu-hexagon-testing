@@ -170,6 +170,14 @@ jobs:
         echo "Installed files:"
         find build-systests/install -type f | head -20
 
+    - name: Run Standalone System Tests on hexagon-sim
+      run: |
+        # semihost_read_replay runs twice: without and with the OS awareness
+        # model (OSAM), which changes how hexagon-sim's SYS_READ translates
+        # the guest buffer.
+        ctest --test-dir build-systests --output-on-failure \
+          -R '^semihost_read_replay_sim(_osam)?$'
+
     - name: Build hexagon-arch-tests (semihosting)
       run: |
         cd hexagon-arch-tests
