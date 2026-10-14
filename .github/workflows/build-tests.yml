@@ -99,6 +99,16 @@ jobs:
         echo "HEXAGON_TOOLS_ROOT=$(pwd)/Hexagon_SDK/$SDK_VERSION/tools/HEXAGON_Tools" >> $GITHUB_ENV
         echo "HEXAGON_SDK_TOOLCHAIN=$(pwd)/Hexagon_SDK/$SDK_VERSION/tools/HEXAGON_Tools/$HEXAGON_TOOLS_VER/Tools/bin" >> $GITHUB_ENV
 
+    - name: Build MiniVM tests and sparse archive
+      run: |
+        make -C minivm archive \
+          MINIVM_CC="$HEXAGON_SDK_TOOLCHAIN/hexagon-clang" \
+          MINIVM_LD="$HEXAGON_SDK_TOOLCHAIN/hexagon-clang" \
+          MINIVM_OBJCOPY="$HEXAGON_SDK_TOOLCHAIN/hexagon-llvm-objcopy"
+        echo "MiniVM archive:"
+        ls -lh minivm/hexagon_minivm.tar.gz
+        tar -tzf minivm/hexagon_minivm.tar.gz
+
     - name: Build HVX examples with CMake (Standalone)
       run: |
         # Configure CMake for Hexagon Standalone OS build with Ninja
@@ -360,6 +370,13 @@ jobs:
 
     - name: Create qprintf v81 SDK package
       run: ./sdk_examples/package_qprintf_v81.sh
+
+    - name: Archive MiniVM test package
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: minivm-test-package
+        path: minivm/hexagon_minivm.tar.gz
+        retention-days: 90
 
     - name: Archive standalone test package
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
