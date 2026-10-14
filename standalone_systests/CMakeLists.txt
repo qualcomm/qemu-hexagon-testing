@@ -100,6 +100,7 @@ set(STANDALONE_PROGRAMS
     swi
     swi2
     swi_fs
+    swi_touch_memory
     swi_wait
     sys_atomics
     sys_reg_mut
