@@ -52,6 +52,7 @@ hexagon-linux-toolchain.tar.zst
 # Installation directories
 install/
 _install/
+/minivm/source/
 
 # Package artifacts
 *.tar.gz
