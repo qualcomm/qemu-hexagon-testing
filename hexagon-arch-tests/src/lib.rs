@@ -509,6 +509,39 @@ pub fn read_ipend() -> u32 {
     val
 }
 
+/// Read IPENDAD (S20): IPEND in bits 15:0, IAD in bits 31:16. This is the only
+/// architectural view of IAD before v81.
+#[inline(always)]
+pub fn read_ipendad() -> u32 {
+    let val: u32;
+    unsafe {
+        asm!("{0} = s20", out(reg) val, options(nomem, nostack));
+    }
+    val
+}
+
+/// Read IAD (S102): 32-bit interrupt auto-disable register, v81 and later.
+/// Hand-encoded `r0 = s102`: the rustc LLVM assembler does not accept S102.
+#[inline(always)]
+pub fn read_iad_reg() -> u32 {
+    let val: u32;
+    unsafe {
+        asm!(".word 0x6ee6c000", out("r0") val, options(nomem, nostack));
+    }
+    val
+}
+
+/// Interrupt auto-disable bits for L1 interrupts, bit N for interrupt N.
+/// Uses IAD on v81+ and IPENDAD.IAD (16 interrupts) on older cores.
+#[inline(always)]
+pub fn read_iad() -> u32 {
+    if isa_version() >= ISA_V81 {
+        read_iad_reg()
+    } else {
+        read_ipendad() >> 16
+    }
+}
+
 #[inline(always)]
 pub fn read_vid() -> u32 {
     let val: u32;
