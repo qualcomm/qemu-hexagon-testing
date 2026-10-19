@@ -10,6 +10,9 @@
 //! L2VIC base address is discovered dynamically from the config table.
 //! Group 0 interrupts connect to L1 INT#2 (per l2vic.h).
 //!
+//! The CIAD tests read the IAD bits through IAD (S102) on v81 and later and
+//! through IPENDAD.IAD (S20[31:16]) on older cores, selected with REV.
+//!
 //! A fully functional L2VIC is required — missing or non-functional L2VIC
 //! is treated as a fatal error.
 
@@ -35,6 +38,24 @@ static HANDLER_COUNT: AtomicU32 = AtomicU32::new(0);
 static GATE_STATUS_AFTER_A: AtomicU32 = AtomicU32::new(0xFFFF_FFFF);
 static GATE_STATUS_AFTER_B_RAISE: AtomicU32 = AtomicU32::new(0xFFFF_FFFF);
 static GATE_STATUS_AFTER_VID_WRITE: AtomicU32 = AtomicU32::new(0xFFFF_FFFF);
+
+// CIAD test state. The ISR performs the CIAD variant selected by CIAD_MODE
+// while irq_a is still the active vector, and records VID0 after each step.
+// crt0.S's automatic post-return `ciad` happens only after the ISR returns.
+static CIAD_MODE: AtomicU32 = AtomicU32::new(0);
+static CIAD_VID_BEFORE: AtomicU32 = AtomicU32::new(0xFFFF_FFFF);
+static CIAD_VID_AFTER_NOOP: AtomicU32 = AtomicU32::new(0xFFFF_FFFF);
+static CIAD_VID_AFTER_RELEASE: AtomicU32 = AtomicU32::new(0xFFFF_FFFF);
+static CIAD_IAD_BEFORE: AtomicU32 = AtomicU32::new(0xFFFF_FFFF);
+static CIAD_IAD_AFTER_NOOP: AtomicU32 = AtomicU32::new(0xFFFF_FFFF);
+static CIAD_IAD_AFTER_RELEASE: AtomicU32 = AtomicU32::new(0xFFFF_FFFF);
+
+// CIAD modes
+const CIAD_MODE_NON_VIC_BITS: u32 = 0;
+const CIAD_MODE_OTHER_VIC_LINES: u32 = 1;
+
+// L1 interrupts IRQ2..IRQ5 are wired to VIC0..VIC3
+const L2VIC_CORE_INTS: u32 = 0xf << 2;
 
 // L2VIC state
 static L2VIC_VA: AtomicU32 = AtomicU32::new(0);
@@ -78,6 +99,44 @@ extern "C" fn l2vic_gating_test_isr(_intno: u32) {
         // Restore VID0 = irq_a before returning.
         write_vid(irq_a);
         isync();
+    }
+}
+
+/// CIAD test ISR. First delivery (irq_a): raise irq_b, then issue CIAD
+/// variants that must not release the VIC and check VID0 did not move to
+/// irq_b; finally CIAD the line that did fire, which must release the VIC
+/// and let irq_b be delivered (VID0 == irq_b).
+extern "C" fn l2vic_ciad_test_isr(_intno: u32) {
+    HANDLER_VID.store(read_vid0(), Ordering::SeqCst);
+    let prev_count = HANDLER_COUNT.fetch_add(1, Ordering::SeqCst);
+
+    if prev_count == 0 {
+        let irq_b: u32 = 6;
+        let base = L2VIC_VA.load(Ordering::SeqCst);
+
+        CIAD_VID_BEFORE.store(read_vid0(), Ordering::SeqCst);
+        CIAD_IAD_BEFORE.store(read_iad(), Ordering::SeqCst);
+        l2vic_write(base, L2VIC_SOFT_INT, 1 << irq_b);
+        busy_loop(100);
+
+        match CIAD_MODE.load(Ordering::SeqCst) {
+            CIAD_MODE_NON_VIC_BITS => {
+                ciad(0);
+                ciad(!L2VIC_CORE_INTS);
+            }
+            _ => {
+                // IRQ3..IRQ5 only: not the line irq_a was delivered on
+                ciad(L2VIC_CORE_INTS & !(1 << L2VIC_L1_INTNO));
+            }
+        }
+        busy_loop(100);
+        CIAD_VID_AFTER_NOOP.store(read_vid0(), Ordering::SeqCst);
+        CIAD_IAD_AFTER_NOOP.store(read_iad(), Ordering::SeqCst);
+
+        ciad(1 << L2VIC_L1_INTNO);
+        busy_loop(100);
+        CIAD_VID_AFTER_RELEASE.store(read_vid0(), Ordering::SeqCst);
+        CIAD_IAD_AFTER_RELEASE.store(read_iad(), Ordering::SeqCst);
     }
 }
 
@@ -398,6 +457,136 @@ fn test_l2vic_vid_write_does_not_bypass_delivery_gating() {
     clear_l1_int2();
 }
 
+/// Common setup/teardown for the in-ISR CIAD tests.
+fn run_ciad_isr_test(mode: u32) {
+    let base = L2VIC_VA.load(Ordering::SeqCst);
+    let irq_a: u32 = 5;
+    let irq_b: u32 = 6;
+
+    HANDLER_VID.store(0xFFFF_FFFF, Ordering::SeqCst);
+    HANDLER_COUNT.store(0, Ordering::SeqCst);
+    CIAD_MODE.store(mode, Ordering::SeqCst);
+    CIAD_VID_BEFORE.store(0xFFFF_FFFF, Ordering::SeqCst);
+    CIAD_VID_AFTER_NOOP.store(0xFFFF_FFFF, Ordering::SeqCst);
+    CIAD_VID_AFTER_RELEASE.store(0xFFFF_FFFF, Ordering::SeqCst);
+    CIAD_IAD_BEFORE.store(0xFFFF_FFFF, Ordering::SeqCst);
+    CIAD_IAD_AFTER_NOOP.store(0xFFFF_FFFF, Ordering::SeqCst);
+    CIAD_IAD_AFTER_RELEASE.store(0xFFFF_FFFF, Ordering::SeqCst);
+
+    let saved_imask = read_imask();
+    write_imask(saved_imask & !(1 << L2VIC_L1_INTNO));
+    register_interrupt(L2VIC_L1_INTNO, l2vic_ciad_test_isr);
+
+    let saved_type = l2vic_read(base, L2VIC_INT_TYPE);
+    l2vic_write(
+        base,
+        L2VIC_INT_TYPE,
+        saved_type | (1 << irq_a) | (1 << irq_b),
+    );
+    l2vic_write(
+        base,
+        L2VIC_INT_ENABLE_SET,
+        (1 << irq_a) | (1 << irq_b),
+    );
+    busy_loop(10);
+
+    l2vic_write(base, L2VIC_SOFT_INT, 1 << irq_a);
+    busy_loop(400);
+
+    check32!(CIAD_VID_BEFORE.load(Ordering::SeqCst), irq_a);
+    // CIAD that does not target the active VIC line must leave irq_a active
+    check32!(CIAD_VID_AFTER_NOOP.load(Ordering::SeqCst), irq_a);
+    // CIAD of the active line releases the VIC: irq_b is delivered
+    check32!(CIAD_VID_AFTER_RELEASE.load(Ordering::SeqCst), irq_b);
+    check32!(HANDLER_COUNT.load(Ordering::SeqCst), 2);
+    check32!(HANDLER_VID.load(Ordering::SeqCst), irq_b);
+
+    // IAD[2] (IAD on v81+, IPENDAD.IAD before): set when the core took the
+    // interrupt, still set after a CIAD that did not clear it, and cleared by
+    // the CIAD of IRQ2.
+    let iad_bit = 1 << L2VIC_L1_INTNO;
+    check32!(CIAD_IAD_BEFORE.load(Ordering::SeqCst) & iad_bit, iad_bit);
+    check32!(CIAD_IAD_AFTER_NOOP.load(Ordering::SeqCst) & iad_bit, iad_bit);
+    check32!(CIAD_IAD_AFTER_RELEASE.load(Ordering::SeqCst) & iad_bit, 0);
+
+    l2vic_clear_irq(base, irq_a);
+    l2vic_clear_irq(base, irq_b);
+    l2vic_write(base, L2VIC_INT_TYPE, saved_type);
+    write_imask(saved_imask);
+    clear_l1_int2();
+}
+
+/// CIAD with no VIC bits (zero, or only bits outside IRQ2..IRQ5) must not
+/// acknowledge the L2VIC; CIAD of IRQ2 afterwards does.
+fn test_ciad_without_vic_bits_does_not_ack_l2vic() {
+    run_ciad_isr_test(CIAD_MODE_NON_VIC_BITS);
+}
+
+/// CIAD of IRQ3..IRQ5 must not acknowledge a vector delivered on IRQ2
+/// (VIC0). Each VIC line is acknowledged independently.
+fn test_ciad_other_vic_line_does_not_ack_l2vic() {
+    run_ciad_isr_test(CIAD_MODE_OTHER_VIC_LINES);
+}
+
+/// CIAD of IRQ2 must not acknowledge the L2VIC if the core never took the
+/// interrupt (IAD[2] still clear because IMASK[2] blocked delivery): only
+/// clearing an IAD bit that was set is an acknowledgement. This matches the
+/// l2vic.so cosim shipped with hexagon-sim, which tracks IAD rather than
+/// treating every CIAD as core-ready.
+fn test_ciad_does_not_ack_l2vic_when_iad_clear() {
+    let base = L2VIC_VA.load(Ordering::SeqCst);
+    let irq_a: u32 = 5;
+    let irq_b: u32 = 6;
+
+    let saved_imask = read_imask();
+    // Core must not take IRQ2, so IAD[2] stays clear
+    write_imask(saved_imask | (1 << L2VIC_L1_INTNO));
+    let saved_vid = read_vid();
+
+    let saved_type = l2vic_read(base, L2VIC_INT_TYPE);
+    l2vic_write(
+        base,
+        L2VIC_INT_TYPE,
+        saved_type | (1 << irq_a) | (1 << irq_b),
+    );
+    l2vic_write(
+        base,
+        L2VIC_INT_ENABLE_SET,
+        (1 << irq_a) | (1 << irq_b),
+    );
+    busy_loop(10);
+
+    l2vic_write(base, L2VIC_SOFT_INT, 1 << irq_a);
+    busy_loop(100);
+    check32!(read_vid0(), irq_a);
+    // Core did not take the interrupt: IAD[2] is clear
+    check32!(read_iad() & (1 << L2VIC_L1_INTNO), 0);
+
+    l2vic_write(base, L2VIC_SOFT_INT, 1 << irq_b);
+    busy_loop(100);
+    // irq_a is still the active vector
+    check32!(read_vid0(), irq_a);
+
+    // Unrelated CIAD does nothing
+    ciad(!L2VIC_CORE_INTS);
+    busy_loop(100);
+    check32!(read_vid0(), irq_a);
+
+    // IAD[2] is clear, so this CIAD is not an acknowledgement
+    ciad(1 << L2VIC_L1_INTNO);
+    busy_loop(1000);
+    check32!(read_vid0(), irq_a);
+    check32!(read_iad() & (1 << L2VIC_L1_INTNO), 0);
+
+    l2vic_clear_irq(base, irq_a);
+    l2vic_clear_irq(base, irq_b);
+    l2vic_write(base, L2VIC_INT_TYPE, saved_type);
+    write_vid(saved_vid);
+    isync();
+    clear_l1_int2();
+    write_imask(saved_imask);
+}
+
 /// Fast L2VIC interface — enable/disable IRQs via fast interface,
 /// verify state via standard INT_ENABLE reads.
 fn test_l2vic_fast_interface() {
@@ -467,6 +656,18 @@ pub extern "C" fn rust_main() -> i32 {
     run_test(
         "l2vic_vid_write_does_not_bypass_delivery_gating",
         test_l2vic_vid_write_does_not_bypass_delivery_gating,
+    );
+    run_test(
+        "ciad_without_vic_bits_does_not_ack_l2vic",
+        test_ciad_without_vic_bits_does_not_ack_l2vic,
+    );
+    run_test(
+        "ciad_other_vic_line_does_not_ack_l2vic",
+        test_ciad_other_vic_line_does_not_ack_l2vic,
+    );
+    run_test(
+        "ciad_does_not_ack_l2vic_when_iad_clear",
+        test_ciad_does_not_ack_l2vic_when_iad_clear,
     );
     run_test("l2vic_fast_interface", test_l2vic_fast_interface);
 
