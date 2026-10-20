@@ -15,13 +15,12 @@
  *   - Interrupts are delivered while k0lock is held; SYSCFG.KL remains
  *     set through the ISR; mutual exclusion is preserved
  *   - Same for tlblock
- *   - A thread stalled waiting to acquire k0lock does NOT service
- *     interrupts; the interrupt is steered to the running holder thread
- *   - Same for tlblock
+ *   - Contended acquisitions preserve mutual exclusion under interrupt
+ *     pressure, and each confirmed owner can service an interrupt
  */
 
 #include <stdio.h>
-#include <string.h>
+#include <stdatomic.h>
 #include "hexagon_standalone.h"
 #include "interrupts.h"
 #include "thread_common.h"
@@ -43,22 +42,22 @@ void register_interrupt(int intno, void (*handler)(int intno));
 
 static inline void do_k0lock(void)
 {
-    asm volatile("k0lock\n");
+    asm volatile("k0lock\n" : : : "memory");
 }
 
 static inline void do_k0unlock(void)
 {
-    asm volatile("k0unlock\n");
+    asm volatile("k0unlock\n" : : : "memory");
 }
 
 static inline void do_tlblock(void)
 {
-    asm volatile("tlblock\n");
+    asm volatile("tlblock\n" : : : "memory");
 }
 
 static inline void do_tlbunlock(void)
 {
-    asm volatile("tlbunlock\n");
+    asm volatile("tlbunlock\n" : : : "memory");
 }
 
 static inline uint32_t get_syscfg(void)
@@ -363,214 +362,148 @@ static void test_tlblock_with_interrupts(void)
     check32_ne(isr_tl_set_count, 0);
 }
 
-/* ===== Stalled thread does not service interrupts ===== */
+/* ===== Contended acquisition and interrupt delivery ===== */
 
 /*
- * Per Section 6.1.3.2, a thread stalled on k0lock/tlblock is under a
- * "stall condition" and will not service interrupts.  The hardware
- * steers the interrupt to another qualified thread.
+ * A signal immediately before k0lock/tlblock does not prove that the
+ * instruction has executed. A waiter may be descheduled after the signal,
+ * and interrupts before its acquisition attempt are legitimate. No delay
+ * on another thread can establish that the waiter has actually stalled.
  *
- * Setup: thread 1 holds the lock with interrupts masked (imask).
- * Threads 2-3 are stalled waiting on the lock and are the ONLY
- * threads eligible for interrupt 0.
+ * Instead, hold the lock on thread 0 while starting two waiters and firing
+ * SWIs. Allow interrupts before acquisition. After releasing the initial
+ * owner, wait for each waiter to report a completed acquisition, then
+ * require it to handle an interrupt before allowing it to unlock. Service
+ * the waiters in acquisition order, which need not be thread-ID order.
  *
- * On correct hardware the interrupt router recognises threads 2-3 as
- * stalled and does not deliver the interrupt.  The SWIs pend and are
- * eventually delivered after the threads un-stall and acquire the lock.
- *
- * If the emulator does not implement stall-based interrupt steering it
- * will wake the pended threads to service the ISR, then retry the lock
- * instruction.  This is observable: the ISR fires during stall_phase,
- * before the holder has released the lock.
+ * This tests exclusion and owner interrupt delivery without claiming to
+ * observe the unobservable interval inside another thread's lock packet.
  */
+#define CONTENTION_SWIS 200
+#define WAITER_MASK ((1u << 2) | (1u << 3))
 
-#define STALL_SWIS 200
+struct contention_lock {
+    void (*lock)(void);
+    void (*unlock)(void);
+};
 
-static volatile int holder_ready;
-static volatile int waiters_ready;
-static volatile int swis_complete;
-static volatile int stall_isr_htid[6];
-static volatile int stall_phase;
-static volatile int isr_while_pended;
+static atomic_uint waiters_ready;
+static atomic_uint acquired_mask;
+static atomic_uint release_mask;
+static atomic_uint active_owners;
+static atomic_uint overlapping_owners;
+static atomic_uint contention_irqs[6];
+static atomic_uint missing_lock_in_isr;
+static uint32_t contention_syscfg_mask;
 
-static void stall_isr(int intno)
+static void contention_isr(int intno)
 {
-    int tid = get_htid();
-    stall_isr_htid[tid]++;
-    if (stall_phase)
-        isr_while_pended++;
-}
+    unsigned tid = get_htid();
+    unsigned bit = 1u << tid;
 
-/* Thread 1: mask interrupts, acquire lock, signal ready, hold until done */
-static void k0lock_holder(void *arg)
-{
-    set_thread_imask(0xffffffff);
-    do_k0lock();
-    holder_ready = 1;
-    while (!swis_complete)
-        delay(1);
-    do_k0unlock();
-}
-
-/*
- * Threads 2-3: signal ready then attempt to acquire the lock.
- *
- * On real hardware the k0lock stalls until the holder releases.
- * After acquiring, the thread executes delay(1024) which gives time
- * for any legitimately-pending interrupts to drain.
- */
-static void k0lock_waiter(void *arg)
-{
-    __sync_fetch_and_add(&waiters_ready, 1);
-    do_k0lock();
-    delay(1024);
-    do_k0unlock();
-}
-
-static void tlblock_holder(void *arg)
-{
-    set_thread_imask(0xffffffff);
-    do_tlblock();
-    holder_ready = 1;
-    while (!swis_complete)
-        delay(1);
-    do_tlbunlock();
-}
-
-static void tlblock_waiter(void *arg)
-{
-    __sync_fetch_and_add(&waiters_ready, 1);
-    do_tlblock();
-    delay(1024);
-    do_tlbunlock();
-}
-
-static void stall_test_setup(void)
-{
-    holder_ready = 0;
-    waiters_ready = 0;
-    swis_complete = 0;
-    stall_phase = 0;
-    isr_while_pended = 0;
-    memset((void *)stall_isr_htid, 0, sizeof(stall_isr_htid));
-
-    register_interrupt(0, stall_isr);
-    set_thread_imask(0xffffffff);   /* Mask all ints for thread 0 */
-    iassignw(0, 1);          /* Exclude thread 0 from interrupt 0 */
-    /*
-     * Thread 1 (holder) masks its own interrupts via imask inside
-     * its thread function.  This leaves only threads 2-3 (the pended
-     * waiters) eligible for interrupt 0, forcing an emulator that
-     * lacks stall-based steering to attempt delivery on pended
-     * threads rather than silently routing to the holder.
-     */
-}
-
-static void stall_test_fire_swis(void)
-{
-    /*
-     * Wait for waiter threads to signal they are about to call
-     * k0lock/tlblock.  After the atomic increment the very next
-     * instruction is the lock acquisition, which will stall because
-     * the holder already has it.  The delay() below gives ample
-     * time for the 1-2 intervening instructions to retire,
-     * guaranteeing the waiters are in the stall before the first
-     * SWI fires.
-     */
-    while (waiters_ready < 2)
-        delay(1);
-    delay(200);
-
-    /* Fire SWIs -- pended threads must not service them */
-    stall_phase = 1;
-    for (int i = 0; i < STALL_SWIS; i++) {
-        swi(1);
-        delay(1);
+    if ((atomic_load(&acquired_mask) & bit) &&
+        !(atomic_load(&release_mask) & bit) &&
+        !(get_syscfg() & contention_syscfg_mask)) {
+        atomic_fetch_add(&missing_lock_in_isr, 1);
     }
-    stall_phase = 0;
-
-    swis_complete = 1;
+    atomic_fetch_add(&contention_irqs[tid], 1);
 }
 
-static void stall_test_verify(const char *name)
+static void contention_waiter(void *arg)
 {
-    int waiter_total = stall_isr_htid[2] + stall_isr_htid[3];
+    const struct contention_lock *ops = arg;
+    unsigned bit = 1u << get_htid();
 
-    printf("  ISR by thread: T0=%d T1=%d T2=%d T3=%d\n",
-           stall_isr_htid[0], stall_isr_htid[1],
-           stall_isr_htid[2], stall_isr_htid[3]);
-    printf("  ISR while pended on lock: %d\n", isr_while_pended);
-    /* Thread 0: masked -- should not handle any */
-    check32(stall_isr_htid[0], 0);
-    /* Thread 1 (holder): masked via imask -- should not handle any */
-    check32(stall_isr_htid[1], 0);
-    /*
-     * Self-validation: verify the waiter threads actually received
-     * at least one interrupt after un-stalling and acquiring the lock.
-     * If this is zero the SWIs were never processed and the test is
-     * vacuous -- it would pass even if interrupt delivery were
-     * completely broken.
-     */
-    check32_ne(waiter_total, 0);
-    /*
-     * The critical assertion: no ISR must fire on a pended thread
-     * during the SWI phase.  On correct hardware, stalled threads
-     * never service interrupts.  An emulator that wakes pended
-     * threads for interrupt delivery will trip this check.
-     */
-    check32(isr_while_pended, 0);
+    atomic_fetch_add(&waiters_ready, 1);
+    ops->lock();
+    if (atomic_fetch_add(&active_owners, 1) != 0) {
+        atomic_fetch_add(&overlapping_owners, 1);
+    }
+    atomic_fetch_or(&acquired_mask, bit);
+    while (!(atomic_load(&release_mask) & bit)) {
+        pause();
+    }
+    atomic_fetch_sub(&active_owners, 1);
+    ops->unlock();
 }
 
-/*
- * Thread stalled on k0lock does not service interrupts.
- */
-static void test_k0lock_stall_no_interrupt(void)
+static void test_contended_lock_with_interrupts(const char *name,
+                                               void (*lock)(void),
+                                               void (*unlock)(void),
+                                               unsigned syscfg_bit)
 {
-    printf("stalled k0lock thread does not service interrupts\n");
-    stall_test_setup();
+    struct contention_lock ops = { lock, unlock };
+    unsigned pending = WAITER_MASK;
 
-    /* Start the holder -- it acquires k0lock and signals */
-    create_waiting_thread(k0lock_holder,
-                          &stack[0][STACK_SIZE - 16], 1, NULL);
-    start_waiting_threads(1 << 1);
-    while (!holder_ready)
-        delay(1);
+    printf("contended %s acquisition and owner interrupts\n", name);
+    atomic_store(&waiters_ready, 0);
+    atomic_store(&acquired_mask, 0);
+    atomic_store(&release_mask, 0);
+    atomic_store(&active_owners, 0);
+    atomic_store(&overlapping_owners, 0);
+    atomic_store(&missing_lock_in_isr, 0);
+    for (unsigned tid = 0; tid < 6; tid++) {
+        atomic_store(&contention_irqs[tid], 0);
+    }
+    contention_syscfg_mask = 1u << syscfg_bit;
 
-    /* Start waiters -- they stall on k0lock immediately */
-    create_waiting_thread(k0lock_waiter,
-                          &stack[1][STACK_SIZE - 16], 2, NULL);
-    create_waiting_thread(k0lock_waiter,
-                          &stack[2][STACK_SIZE - 16], 3, NULL);
-    start_waiting_threads((1 << 2) | (1 << 3));
+    set_thread_imask(0xffffffff);
+    iassignw(0, 1);  /* Exclude thread 0; allow interrupts on the waiters. */
+    register_interrupt(0, contention_isr);
+    lock();
+    atomic_fetch_add(&active_owners, 1);
 
-    stall_test_fire_swis();
-    thread_join((1 << 1) | (1 << 2) | (1 << 3));
-    stall_test_verify("k0lock");
-}
+    for (unsigned tid = 2; tid <= 3; tid++) {
+        create_waiting_thread(contention_waiter,
+                              &stack[tid - 2][STACK_SIZE - 16], tid, &ops);
+    }
+    start_waiting_threads(WAITER_MASK);
+    while (atomic_load(&waiters_ready) != 2) {
+        pause();
+    }
+    for (unsigned i = 0; i < CONTENTION_SWIS; i++) {
+        swi(1);
+        pause();
+    }
+    atomic_fetch_sub(&active_owners, 1);
+    unlock();
 
-/*
- * Thread stalled on tlblock does not service interrupts.
- */
-static void test_tlblock_stall_no_interrupt(void)
-{
-    printf("stalled tlblock thread does not service interrupts\n");
-    stall_test_setup();
+    while (pending) {
+        unsigned acquired = atomic_load(&acquired_mask) & pending;
 
-    create_waiting_thread(tlblock_holder,
-                          &stack[0][STACK_SIZE - 16], 1, NULL);
-    start_waiting_threads(1 << 1);
-    while (!holder_ready)
-        delay(1);
+        for (unsigned tid = 2; tid <= 3; tid++) {
+            unsigned bit = 1u << tid;
+            unsigned before;
 
-    create_waiting_thread(tlblock_waiter,
-                          &stack[1][STACK_SIZE - 16], 2, NULL);
-    create_waiting_thread(tlblock_waiter,
-                          &stack[2][STACK_SIZE - 16], 3, NULL);
-    start_waiting_threads((1 << 2) | (1 << 3));
+            if (!(acquired & bit)) {
+                continue;
+            }
+            /* The waiter holds the lock until our explicit release. */
+            iassignw(0, ~bit);
+            before = atomic_load(&contention_irqs[tid]);
+            swi(1);
+            while (atomic_load(&contention_irqs[tid]) == before) {
+                pause();
+            }
+            atomic_fetch_or(&release_mask, bit);
+            pending &= ~bit;
+        }
+        pause();
+    }
+    thread_join(WAITER_MASK);
 
-    stall_test_fire_swis();
-    thread_join((1 << 1) | (1 << 2) | (1 << 3));
-    stall_test_verify("tlblock");
+    printf("  Interrupts: T2=%u T3=%u; overlapping owners: %u\n",
+           atomic_load(&contention_irqs[2]),
+           atomic_load(&contention_irqs[3]),
+           atomic_load(&overlapping_owners));
+    check32(atomic_load(&contention_irqs[0]), 0);
+    check32(atomic_load(&contention_irqs[1]), 0);
+    check32_ne(atomic_load(&contention_irqs[2]), 0);
+    check32_ne(atomic_load(&contention_irqs[3]), 0);
+    check32(atomic_load(&overlapping_owners), 0);
+    check32(atomic_load(&missing_lock_in_isr), 0);
+    check32(atomic_load(&active_owners), 0);
+    check32(get_syscfg() & contention_syscfg_mask, 0);
 }
 
 int main(int argc, char *argv[])
@@ -588,9 +521,11 @@ int main(int argc, char *argv[])
     test_k0lock_with_interrupts();
     test_tlblock_with_interrupts();
 
-    /* Stalled thread does not service interrupts */
-    test_k0lock_stall_no_interrupt();
-    test_tlblock_stall_no_interrupt();
+    /* Contended acquisition and confirmed-owner interrupt delivery */
+    test_contended_lock_with_interrupts("k0lock", do_k0lock, do_k0unlock,
+                                        SYSCFG_KL_BIT);
+    test_contended_lock_with_interrupts("tlblock", do_tlblock, do_tlbunlock,
+                                        SYSCFG_TL_BIT);
 
     puts(err ? "FAIL" : "PASS");
     return err ? 1 : 0;
