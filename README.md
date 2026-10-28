@@ -12,7 +12,7 @@ This project contains programs to exercise QEMU hexagon.
 
 ```bash
 cd /tmp/hexagon-build
-wget https://softwarecenter.qualcomm.com/api/download/software/sdks/Hexagon_SDK/Linux/Debian/6.7.0.0/Hexagon_SDK_Linux_6.7.0.zip
+wget -O hexagon_sdk.zip https://softwarecenter.qualcomm.com/api/download/software/sdks/Hexagon_SDK/Linux/Debian/6.7.0.0/Hexagon_SDK_Linux_6.7.0.zip
 unzip hexagon_sdk.zip
 cd qemu-hexagon-testing
 
@@ -52,10 +52,22 @@ A comprehensive collection of 60+ system-level tests for the Hexagon Standalone 
 
 - **MMU Tests**: `mmu_asids`, `mmu_cacheops`, `mmu_multi_tlb`, `mmu_overlap`, `mmu_page_size`, `mmu_permissions`, `hsv39_tlb`
 - **HVX Tests**: `hvx_64b`, `hvx_ext`, `hvx-multi`, `hvx_nocoproc`
+- **HLX Tests**: `hlx_sys_ccr`, `hlx_sys_enable`, `hlx_sys_persist`, `hlx_sys_vsp`, `hlx_sys_vtcm`
 - **Interrupt Tests**: `fastint`, `fastl2vic`, `levelint`, `pendalot`, `pend_wake_wait`
 - **System Tests**: `access`, `badva`, `checkforpriv`, `float_excp`, `invalid_opcode`, `tlblock`, `timer_reg`
 - **Thread Tests**: `test-thread`, `thread_scheduling`
 - **And many more...** (see `standalone_systests/CMakeLists.txt` for full list)
+
+#### HLX test package
+
+Build the V85 HLX test archive using:
+
+```sh
+cmake --build build-systests --target package_hlx_systests
+```
+
+`build-systests/hlx_systests.tar.gz` contains the five tests for QEMU's
+`V85QA_1` machine.
 
 ### HVX Examples (`sdk_examples/`)
 
