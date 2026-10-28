@@ -40,6 +40,14 @@ if(DEFINED HEXAGON_TOOLS_ROOT)
 endif()
 
 # Programs that should have main functions (standalone executables)
+set(HLX_PROGRAMS
+    hlx_sys_ccr
+    hlx_sys_enable
+    hlx_sys_persist
+    hlx_sys_vsp
+    hlx_sys_vtcm
+)
+
 set(STANDALONE_PROGRAMS
     access
     badva
@@ -57,6 +65,7 @@ set(STANDALONE_PROGRAMS
     getcwd
     gregs
     hmx
+    ${HLX_PROGRAMS}
     hsv39_tlb
     hvx_64b
     hvx_ext
@@ -176,6 +185,32 @@ endfunction()
 foreach(PROGRAM ${STANDALONE_PROGRAMS})
     add_systest_program(${PROGRAM})
 endforeach()
+
+# Keep the inline assembly intrinsics at the same optimization level as QEMU's
+# TCG tests. The compiler does not track their L-register state.
+set(HLX_PACKAGE_FILES "")
+foreach(PROGRAM ${HLX_PROGRAMS})
+    target_compile_options(${PROGRAM} PRIVATE -O0 -mv85 -mhlx)
+    target_link_options(${PROGRAM} PRIVATE -mv85)
+    list(APPEND HLX_PACKAGE_FILES bin/${PROGRAM})
+endforeach()
+
+find_program(GZIP_EXECUTABLE gzip)
+if(NOT GZIP_EXECUTABLE)
+    message(FATAL_ERROR "gzip is required to package the HLX system tests")
+endif()
+
+add_custom_target(package_hlx_systests
+    COMMAND ${CMAKE_COMMAND} -E tar cf
+        ${CMAKE_BINARY_DIR}/hlx_systests.tar
+        --format=gnutar "--mtime=1970-01-01 00:00:00 UTC"
+        ${HLX_PACKAGE_FILES}
+    COMMAND ${GZIP_EXECUTABLE} -n -f ${CMAKE_BINARY_DIR}/hlx_systests.tar
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    DEPENDS ${HLX_PROGRAMS}
+    COMMENT "Packaging HLX standalone system tests"
+    VERBATIM
+)
 
 # standalone_hw needs the test_set_prio symbol from monitor_insts.S.
 if(TARGET standalone_hw)

@@ -399,6 +399,18 @@ jobs:
         path: systests_standalone.tar.gz
         retention-days: 90
 
+    - name: Create HLX system tests package
+      run: |
+        cmake --build build-systests --target package_hlx_systests
+        sha256sum build-systests/hlx_systests.tar.gz
+
+    - name: Archive HLX system tests package
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      with:
+        name: hlx-systests-package
+        path: build-systests/hlx_systests.tar.gz
+        retention-days: 90
+
     - name: Archive hexagon-arch-tests semihosting package
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       with:
