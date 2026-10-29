@@ -31,6 +31,14 @@ const SWI_INTNO: u32 = 5;
 static HANDLER_HTID: AtomicU32 = AtomicU32::new(0xFFFF);
 static HANDLER_COUNT: AtomicU32 = AtomicU32::new(0);
 
+// Upper bound, in polling iterations, on every wait for another hardware
+// thread.  The architecture guarantees that a thread starts and that a
+// qualified interrupt is taken, but not how soon, and an emulator that runs
+// each hardware thread on its own host thread can leave one unscheduled for
+// many milliseconds.  Each wait stops as soon as its condition holds; a
+// timeout may also occur if a host thread is delayed beyond this bound.
+const WAIT_ITERS: u32 = 1_000_000;
+
 // Per-thread synchronization
 static T1_RUNNING: AtomicU32 = AtomicU32::new(0);
 static T1_EXIT: AtomicU32 = AtomicU32::new(0);
@@ -149,8 +157,8 @@ fn setup_threads(prio1: u32, prio2: u32) {
     set_thread_entry(2, Some(thread2_entry));
     start_threads((1 << 1) | (1 << 2));
 
-    wait_for(&T1_RUNNING, 1, 50000);
-    wait_for(&T2_RUNNING, 1, 50000);
+    check!(wait_for(&T1_RUNNING, 1, WAIT_ITERS));
+    check!(wait_for(&T2_RUNNING, 1, WAIT_ITERS));
     // Let threads fully settle (STID, IMASK, IE all written)
     busy_loop(200);
 }
@@ -158,8 +166,8 @@ fn setup_threads(prio1: u32, prio2: u32) {
 fn teardown_threads() {
     T1_EXIT.store(1, Ordering::SeqCst);
     T2_EXIT.store(1, Ordering::SeqCst);
-    wait_thread_stopped(1, 50000);
-    wait_thread_stopped(2, 50000);
+    check!(wait_thread_stopped(1, WAIT_ITERS));
+    check!(wait_thread_stopped(2, WAIT_ITERS));
 }
 
 fn reset_handler_state() {
@@ -197,8 +205,8 @@ fn trigger_l2vic_and_wait() {
     busy_loop(10);
 
     l2vic_write(base, L2VIC_SOFT_INT + 4 * slice, 1 << bit);
-    // Wait for handler, checking periodically for cross-thread delivery
-    for _ in 0..200 {
+    // Wait for the handler, which runs on whichever thread qualifies
+    for _ in 0..WAIT_ITERS {
         if HANDLER_COUNT.load(Ordering::SeqCst) > 0 {
             break;
         }
