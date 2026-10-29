@@ -8,7 +8,7 @@ set -eu
 
 sdk=${1:-${HEXAGON_SDK_ROOT:-/opt/Hexagon_SDK/6.4.0.2}}
 output=${2:-$PWD/qemu-qurt-tests-sdk-v81.tar.gz}
-tools="$sdk/tools/HEXAGON_Tools/19.0.04"
+tools="$sdk/tools/HEXAGON_Tools/${HEXAGON_TOOLS_VER:-19.0.04}"
 example="$sdk/examples/qprintf_example"
 package=qemu-qurt-tests-bc94e62a20370dfe405220898fc2a64127fd64a6
 tmp=$(mktemp -d)
