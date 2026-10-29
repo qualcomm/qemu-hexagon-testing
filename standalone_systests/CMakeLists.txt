@@ -7,8 +7,8 @@ if(NOT HEXAGON_ARCH)
 endif()
 
 # SDK version for install paths
-set(SDK_VERSION "6.4.0.2" CACHE STRING "Hexagon SDK version")
-set(HEXAGON_TOOLS_VER "19.0.04" CACHE STRING "Hexagon tools version")
+set(SDK_VERSION "6.7.0.0" CACHE STRING "Hexagon SDK version")
+set(HEXAGON_TOOLS_VER "21.0.04" CACHE STRING "Hexagon tools version")
 
 # Determine install subdirectory based on build type
 set(INSTALL_SUBDIR "StandaloneSysTests_${SDK_VERSION}_${HEXAGON_ARCH}")
@@ -36,7 +36,7 @@ endif()
 
 # Add SDK header paths
 if(DEFINED HEXAGON_TOOLS_ROOT)
-    include_directories(${HEXAGON_TOOLS_ROOT}/${HEXAGON_TOOLS_VER}/Tools/target/hexagon/include)
+    include_directories(${HEXAGON_TOOLS_ROOT}/target/hexagon/include)
 endif()
 
 # Programs that should have main functions (standalone executables)

@@ -12,14 +12,14 @@ This project contains programs to exercise QEMU hexagon.
 
 ```bash
 cd /tmp/hexagon-build
-wget https://softwarecenter.qualcomm.com/api/download/software/sdks/Hexagon_SDK/Linux/Debian/6.4.0.2/Hexagon_SDK_lnx.zip
+wget https://softwarecenter.qualcomm.com/api/download/software/sdks/Hexagon_SDK/Linux/Debian/6.7.0.0/Hexagon_SDK_Linux_6.7.0.zip
 unzip hexagon_sdk.zip
 cd qemu-hexagon-testing
 
 cmake -S standalone_systests -B build-systests \
   -G Ninja \
   -DCMAKE_TOOLCHAIN_FILE=${PWD}/cmake/hexagon-standalone.cmake \
-  -DHEXAGON_SDK_ROOT=/tmp/hexagon-build/Hexagon_SDK/6.4.0.2 \
+  -DHEXAGON_SDK_ROOT=/tmp/hexagon-build/Hexagon_SDK/6.7.0.0 \
   -DHEXAGON_ARCH=v68
 
 cmake --build build-systests
@@ -29,7 +29,7 @@ ls -la build-systests/bin/
 
 ## Requirements
 
-- **Hexagon SDK 6.4.0.2**: Download from Qualcomm Software Center
+- **Hexagon SDK 6.7.0.0**: Download from Qualcomm Software Center
 - **Hexagon Linux Toolchain** (for Linux builds): [Codelinaro Hexagon Toolchain](https://artifacts.codelinaro.org/artifactory/codelinaro-toolchain-for-hexagon/20.1.4/clang+llvm-20.1.4-cross-hexagon-unknown-linux-musl.tar.zst)
 - **CMake 3.16+**
 - **Ninja build system** (recommended) or Make

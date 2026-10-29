@@ -16,8 +16,8 @@ add_compile_options(-mhvx -mhvx-length=${HVX_LENGTH}b)
 add_link_options(-mhvx)
 
 # SDK version for install paths
-set(SDK_VERSION "6.4.0.2" CACHE STRING "Hexagon SDK version")
-set(HEXAGON_TOOLS_VER "19.0.04" CACHE STRING "Hexagon tools version")
+set(SDK_VERSION "6.7.0.0" CACHE STRING "Hexagon SDK version")
+set(HEXAGON_TOOLS_VER "21.0.04" CACHE STRING "Hexagon tools version")
 
 # Determine install subdirectory based on build type and system
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")

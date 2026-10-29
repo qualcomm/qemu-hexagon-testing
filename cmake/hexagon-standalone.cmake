@@ -8,7 +8,7 @@ set(CMAKE_SYSTEM_PROCESSOR hexagon)
 if(DEFINED ENV{HEXAGON_SDK_ROOT})
     set(HEXAGON_SDK_ROOT $ENV{HEXAGON_SDK_ROOT})
 elseif(NOT HEXAGON_SDK_ROOT)
-    set(HEXAGON_SDK_ROOT /opt/Hexagon_SDK/6.4.0.2)
+    set(HEXAGON_SDK_ROOT /opt/Hexagon_SDK/6.7.0.0)
 endif()
 
 # Determine tools root and toolchain paths
@@ -34,7 +34,7 @@ else()
         message(STATUS "Auto-detected Hexagon tools version: ${TOOLS_VERSION}")
     else()
         # Fallback to known version
-        set(HEXAGON_TOOLS_ROOT ${HEXAGON_SDK_ROOT}/tools/HEXAGON_Tools/19.0.04/Tools)
+        set(HEXAGON_TOOLS_ROOT ${HEXAGON_SDK_ROOT}/tools/HEXAGON_Tools/21.0.04/Tools)
         set(HEXAGON_TOOLCHAIN_BIN ${HEXAGON_TOOLS_ROOT}/bin)
     endif()
 endif()

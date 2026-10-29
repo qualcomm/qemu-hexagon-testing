@@ -11,9 +11,9 @@ on:
   workflow_dispatch:
 
 env:
-  SDK_URL: "https://softwarecenter.qualcomm.com/api/download/software/sdks/Hexagon_SDK/Linux/Debian/6.4.0.2/Hexagon_SDK_lnx.zip"
-  SDK_VERSION: "6.4.0.2"
-  HEXAGON_TOOLS_VER: "19.0.04"
+  SDK_URL: "https://softwarecenter.qualcomm.com/api/download/software/sdks/Hexagon_SDK/Linux/Debian/6.7.0.0/Hexagon_SDK_Linux_6.7.0.zip"
+  SDK_VERSION: "6.7.0.0"
+  HEXAGON_TOOLS_VER: "21.0.04"
 
 jobs:
   build-tests:
