@@ -181,6 +181,18 @@ fn test_modectl_register() {
     check!(modectl & 1 != 0);
 }
 
+fn set_mmu_enabled(enabled: bool) {
+    let syscfg = read_syscfg();
+    let expected = if enabled {
+        syscfg | SYSCFG_MMU_EN
+    } else {
+        syscfg & !SYSCFG_MMU_EN
+    };
+
+    write_syscfg(expected);
+    check32!(read_syscfg() & SYSCFG_MMU_EN, expected & SYSCFG_MMU_EN);
+}
+
 /// Read/write GELR (guest exception link register) from monitor mode.
 fn test_gelr_readwrite() {
     let saved = read_gelr();
@@ -257,13 +269,17 @@ fn priv_insn_probe() {
 /// fault with cause PRIV_INSN_IN_USER (SSR:CAUSE 0x1b), not silently
 /// succeed or fault with some other cause.
 fn test_priv_insn_faults_in_user_mode() {
-    reset_exception_state();
-    enter_user_mode(priv_insn_probe);
-    check32!(get_exception_count(), 1);
-    check32!(get_exception_cause(), CAUSE_PRIV_INSN_IN_USER);
-    // We're back in supervisor mode (exit_user_mode ran before the
-    // fault path even had a chance not to, but confirm anyway).
-    check!(read_ssr() & SSR_UM == 0);
+    let saved_syscfg = read_syscfg();
+
+    for mmu_enabled in [true, false] {
+        set_mmu_enabled(mmu_enabled);
+        reset_exception_state();
+        enter_user_mode(priv_insn_probe);
+        check32!(get_exception_count(), 1);
+        check32!(get_exception_cause(), CAUSE_PRIV_INSN_IN_USER);
+        check!(read_ssr() & SSR_UM == 0);
+    }
+    write_syscfg(saved_syscfg);
 }
 
 /// Trampoline run in user mode: attempts a guest-register (A_GUEST) read
@@ -279,11 +295,17 @@ fn guest_insn_probe() {
 /// A guest-register (A_GUEST) instruction executed from user mode must
 /// fault with cause GUEST_INSN_IN_USER (SSR:CAUSE 0x1a).
 fn test_guest_insn_faults_in_user_mode() {
-    reset_exception_state();
-    enter_user_mode(guest_insn_probe);
-    check32!(get_exception_count(), 1);
-    check32!(get_exception_cause(), CAUSE_GUEST_INSN_IN_USER);
-    check!(read_ssr() & SSR_UM == 0);
+    let saved_syscfg = read_syscfg();
+
+    for mmu_enabled in [true, false] {
+        set_mmu_enabled(mmu_enabled);
+        reset_exception_state();
+        enter_user_mode(guest_insn_probe);
+        check32!(get_exception_count(), 1);
+        check32!(get_exception_cause(), CAUSE_GUEST_INSN_IN_USER);
+        check!(read_ssr() & SSR_UM == 0);
+    }
+    write_syscfg(saved_syscfg);
 }
 
 /// Trampoline run in guest mode by `enter_guest_mode()`: the same
@@ -301,12 +323,17 @@ fn priv_insn_probe_guest() {
 /// fault with cause PRIV_INSN_IN_USER (SSR:CAUSE 0x1b), same as from user
 /// mode: guest mode does not grant monitor-only privileges.
 fn test_priv_insn_faults_in_guest_mode() {
-    reset_exception_state();
-    enter_guest_mode(priv_insn_probe_guest);
-    check32!(get_exception_count(), 1);
-    check32!(get_exception_cause(), CAUSE_PRIV_INSN_IN_USER);
-    // Back in supervisor mode: both UM and GM clear.
-    check!(read_ssr() & (SSR_UM | SSR_GM) == 0);
+    let saved_syscfg = read_syscfg();
+
+    for mmu_enabled in [true, false] {
+        set_mmu_enabled(mmu_enabled);
+        reset_exception_state();
+        enter_guest_mode(priv_insn_probe_guest);
+        check32!(get_exception_count(), 1);
+        check32!(get_exception_cause(), CAUSE_PRIV_INSN_IN_USER);
+        check!(read_ssr() & (SSR_UM | SSR_GM) == 0);
+    }
+    write_syscfg(saved_syscfg);
 }
 
 /// Trampoline run in guest mode: the same guest-register (A_GUEST) read as
@@ -322,10 +349,16 @@ fn guest_insn_probe_guest() {
 /// A guest-register (A_GUEST) instruction executed from guest mode must be
 /// permitted: no exception at all, unlike the user-mode case above.
 fn test_guest_insn_allowed_in_guest_mode() {
-    reset_exception_state();
-    enter_guest_mode(guest_insn_probe_guest);
-    check32!(get_exception_count(), 0);
-    check!(read_ssr() & (SSR_UM | SSR_GM) == 0);
+    let saved_syscfg = read_syscfg();
+
+    for mmu_enabled in [true, false] {
+        set_mmu_enabled(mmu_enabled);
+        reset_exception_state();
+        enter_guest_mode(guest_insn_probe_guest);
+        check32!(get_exception_count(), 0);
+        check!(read_ssr() & (SSR_UM | SSR_GM) == 0);
+    }
+    write_syscfg(saved_syscfg);
 }
 
 fn guest_virtual_instructions() {
