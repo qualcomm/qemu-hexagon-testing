@@ -375,7 +375,7 @@ jobs:
       run: ./sdk_examples/package_qprintf_v81.sh
 
     - name: Archive MiniVM test package
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       with:
         name: minivm-test-package
         path: minivm/hexagon_minivm.tar.gz
@@ -465,14 +465,14 @@ jobs:
         cat build/dist/placements.txt
 
     - name: Archive h2 builds (tarball)
-      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       with:
         name: h2-builds-package
         path: h2_builds/build/h2-builds.tar.gz
         retention-days: 90
 
     - name: Archive h2 builds (individual files)
-      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       with:
         name: h2-builds-files
         path: h2_builds/build/dist/*
@@ -510,7 +510,7 @@ jobs:
 
     - name: Archive test logs
       if: always()
-      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       with:
         name: h2-qurt-test-logs
         path: |
