@@ -278,6 +278,7 @@ endif()
 # Programs that might need special assembly support
 set(SPECIAL_ASM_PROGRAMS
     dtg_interrupt
+    guest_state
     single_step
     tlb-miss-tlblock
 )
