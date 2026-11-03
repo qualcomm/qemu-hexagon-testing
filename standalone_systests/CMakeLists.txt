@@ -90,6 +90,8 @@ set(STANDALONE_PROGRAMS
     mmu_overlap
     mmu_page_size
     mmu_permissions
+    mttcg_imask
+    mttcg_tlb
     multiple_writes
     nmi_cross_thread
     pend_wake_wait
