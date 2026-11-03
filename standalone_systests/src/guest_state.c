@@ -6,7 +6,9 @@
 #include "mmu.h"
 
 #define GSR_CFI (1 << 28)
+#define GSR_UM (1u << 31)
 #define CCR_GEE (1 << 26)
+#define CCR_GRE (1 << 27)
 #define CAUSE_STACK_LIMIT 0x27
 
 #define READ_REG(reg) ({ \
@@ -96,12 +98,45 @@ static void __attribute__((noinline)) test_guest_event(unsigned slot)
     }
 }
 
+/* Virtual RTE to guest user mode must not swap SP and GOSP. */
+static void test_vmrte(void)
+{
+    uint32_t sp, observed, returned, gosp = 0x5a5a5a50;
+
+    WRITE_REG(g1, GSR_UM);
+    WRITE_REG(g2, gosp);
+    asm volatile("%0 = sp\n"
+                 "%2 = #0\n"
+                 "r0 = ##1f\n"
+                 "g0 = r0\n"              /* GELR */
+                 "r0 = ssr\n"
+                 "r0 = setbit(r0, #%[um])\n"
+                 "r0 = setbit(r0, #%[gm])\n"
+                 "ssr = r0\n"
+                 "trap1(r0, #1)\n"        /* vmrte */
+                 "jump 2f\n"             /* A no-op must not pass. */
+                 "1:\n"
+                 "%2 = #1\n"
+                 "2:\n"
+                 "%1 = sp\n"
+                 "sp = %0\n"
+                 "trap1(r0, #2)\n"
+                 : "=&r"(sp), "=&r"(observed), "=&r"(returned)
+                 : [um] "i"(reg_field_info[SSR_UM].offset),
+                   [gm] "i"(reg_field_info[SSR_GM].offset)
+                 : "r0", "memory");
+    check32(returned, 1);
+    check32(observed, sp);
+    check32(READ_REG(g2), gosp);
+}
+
 int main(void)
 {
     install_my_event_vectors();
-    WRITE_REG(ccr, READ_REG(ccr) | CCR_GEE);
+    WRITE_REG(ccr, READ_REG(ccr) | CCR_GEE | CCR_GRE);
     test_guest_event(0);
     test_guest_event(1);
+    test_vmrte();
     puts(err ? "FAIL" : "PASS");
     return err;
 }
