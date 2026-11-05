@@ -6,9 +6,9 @@
 #   make package               # build/dist/* and build/h2-builds.tar.gz
 #   make list
 
-# The patches in patches/ apply on top of this commit of the upstream h2.
+# The patches in patches/ apply on top of this commit of the upstream h2 (master, 2026-11-21).
 H2_REPO ?= https://github.com/qualcomm/hexagon-hypervisor
-H2_REF  ?= 23d5bde4313c1e63ba64dd5d7f542b1055188ef8
+H2_REF  ?= ce77e35d815c2cbd72a3967f058f8a60083a7d5c
 H2_SRC  ?= $(CURDIR)/build/h2-src
 export H2_SRC H2_REPO H2_REF
 
@@ -16,11 +16,13 @@ MACHINES := $(basename $(notdir $(wildcard configs/*.mk)))
 
 all: $(MACHINES)
 
-# Fetch h2 once, before any (possibly parallel) machine build needs it.
-$(H2_SRC)/makefile:
+# Fetch h2 before any (possibly parallel) machine build needs it.  This runs on
+# every make: fetch_h2.sh does nothing unless H2_REF has changed.
+.PHONY: h2-fetch
+h2-fetch:
 	scripts/fetch_h2.sh
 
-$(MACHINES): | $(H2_SRC)/makefile
+$(MACHINES): | h2-fetch
 	scripts/build_h2.sh $@
 
 check: $(addprefix check-,$(MACHINES))

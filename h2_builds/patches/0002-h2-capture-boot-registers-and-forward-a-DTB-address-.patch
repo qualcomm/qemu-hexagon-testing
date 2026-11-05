@@ -1,10 +1,8 @@
-From b40015d8c0eb8c3912e2fc29f99607649103fe46 Mon Sep 17 00:00:00 2001
+From d72866c365fadc7cdfd1dc634b56bcf54cd474f9 Mon Sep 17 00:00:00 2001
 From: Brian Cain <brian.cain@oss.qualcomm.com>
-Date: Thu, 2 Jul 2026 13:27:36 -0500
-Subject: [PATCH] h2: capture boot registers and forward a DTB address to the
- Linux guest
-Content-Type: text/plain; charset="utf-8"
-Content-Transfer-Encoding: 8bit
+Date: Wed, 25 Nov 2026 00:46:15 -0600
+Subject: [PATCH 2/8] h2: capture boot registers and forward a DTB address to
+ the Linux guest
 
 Platform boot firmware may hand the kernel boot parameters in r1:0 at
 reset; the QEMU virt machine's built-in boot shim passes the generated
@@ -29,18 +27,18 @@ Signed-off-by: Brian Cain <brian.cain@oss.qualcomm.com>
 ---
  kernel/init/boot/boot.h         |  8 ++++++++
  kernel/init/boot/boot.ref.S     | 30 ++++++++++++++++++++++++++++++
- kernel/traps/info/info.ref.c    |  9 ++++++++-
+ kernel/traps/info/info.ref.c    |  7 +++++++
  libs/h2/common/h2_common_info.h |  2 ++
  linux/loadlinux.c               | 27 ++++++++++++++++++++++++++-
- 5 files changed, 74 insertions(+), 2 deletions(-)
+ 5 files changed, 73 insertions(+), 1 deletion(-)
 
 diff --git a/kernel/init/boot/boot.h b/kernel/init/boot/boot.h
-index f76be84e..39693342 100644
+index 1f047506..a8391599 100644
 --- a/kernel/init/boot/boot.h
 +++ b/kernel/init/boot/boot.h
-@@ -50,4 +50,12 @@
+@@ -43,4 +43,12 @@
+ #define BOOT_TLBLO_ANGEL ((1 << SIZE_4K) | (DEVICE_TYPE << TLB_ENTRY_C_BITS) | (BOOT_TLB_PERM << TLB_ENTRY_XWRU_BITS))
  #define SBIT_SIZE 1
- #endif
  
 +#if !defined(ASM) && !defined(__ASSEMBLER__)
 +/*
@@ -52,7 +50,7 @@ index f76be84e..39693342 100644
 +
  #endif
 diff --git a/kernel/init/boot/boot.ref.S b/kernel/init/boot/boot.ref.S
-index c20511e7..ae3e2103 100644
+index c9e88b2e..6d91952e 100644
 --- a/kernel/init/boot/boot.ref.S
 +++ b/kernel/init/boot/boot.ref.S
 @@ -73,7 +73,37 @@ FUNC_START start .entry .p2align 12
@@ -94,7 +92,7 @@ index c20511e7..ae3e2103 100644
  #ifdef CRASH_DEBUG
  	r7 = PC
 diff --git a/kernel/traps/info/info.ref.c b/kernel/traps/info/info.ref.c
-index a8bd4492..38e24e85 100644
+index 4e4cf162..51044797 100644
 --- a/kernel/traps/info/info.ref.c
 +++ b/kernel/traps/info/info.ref.c
 @@ -11,6 +11,7 @@
@@ -105,12 +103,10 @@ index a8bd4492..38e24e85 100644
  
  u32_t H2K_trap_info(info_type op, u32_t unit, h2_cfg_unit_entry entry, H2K_thread_context *me) {
  
-@@ -195,7 +196,13 @@ u32_t H2K_trap_info(info_type op, u32_t unit, h2_cfg_unit_entry entry, H2K_threa
- 	
- 	case INFO_NOC_SBASE:
- 	return H2K_gp->noc_sbase;
--	
-+
+@@ -212,6 +213,12 @@ u32_t H2K_trap_info(info_type op, u32_t unit, h2_cfg_unit_entry entry, H2K_threa
+ 	case INFO_LOCAL_MEM_BASE:
+ 	return H2K_gp->local_mem_base;
+ 
 +	case INFO_BOOT_R00:
 +		return h2_boot_params[0];
 +
@@ -121,20 +117,20 @@ index a8bd4492..38e24e85 100644
  		return -1;
  	}
 diff --git a/libs/h2/common/h2_common_info.h b/libs/h2/common/h2_common_info.h
-index 08f6dcaf..85fb6a8d 100644
+index 5be6890b..128c8639 100644
 --- a/libs/h2/common/h2_common_info.h
 +++ b/libs/h2/common/h2_common_info.h
-@@ -53,6 +53,8 @@ typedef enum {
- 	INFO_TCM_OFFSET,  /**< Multicore TCM base offset */
- 	INFO_NOC_MBASE,   /**< Multicore NOC master widget base */
- 	INFO_NOC_SBASE,   /**< Multicore NOC slave widget base */
+@@ -57,6 +57,8 @@ typedef enum {
+ 	INFO_LOCAL_MEM_BASE,   /**< Multicore local memory base address */
+ 	INFO_CLADE2_BASE, /**< CLADE2 regs base */
+ 	INFO_CLADE3_BASE, /**< CLADE3 regs base (0 if not present) */
 +	INFO_BOOT_R00,    /**< r0 at reset on the boot thread (e.g. DTB address, low) */
 +	INFO_BOOT_R01,    /**< r1 at reset on the boot thread (e.g. DTB address, high) */
  	INFO_MAX
  } info_type;
  
 diff --git a/linux/loadlinux.c b/linux/loadlinux.c
-index ca887058..b462fb7f 100644
+index d7e88db8..5f46f6db 100644
 --- a/linux/loadlinux.c
 +++ b/linux/loadlinux.c
 @@ -145,6 +145,28 @@ void boot_ucos() {
@@ -166,10 +162,10 @@ index ca887058..b462fb7f 100644
  unsigned long boot_linux(char fname[]) {
  
  	unsigned long linux_vm = 0;
-@@ -198,8 +220,11 @@ unsigned long boot_linux(char fname[]) {
- 		 );
- #endif
- 
+@@ -177,8 +199,11 @@ unsigned long boot_linux(char fname[]) {
+ 	/* FIXME: set up I$ prefetch and DMT for linux */
+ 	/* syscfg is privileged; the boot VM runs in user mode, so set it through hwconfig */
+ 	if (h2_hwconfig_syscfg_set((h2_info(INFO_SYSCFG) | SYSCFG_DMT) & ~SYSCFG_BQ) == -1) FAIL("syscfg");
 +	unsigned long dtb = boot_dtb_addr();
 +	PRINTF("linux: dtb at 0x%08lx\n", dtb);
 +

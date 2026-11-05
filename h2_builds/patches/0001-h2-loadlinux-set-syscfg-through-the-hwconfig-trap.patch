@@ -1,0 +1,44 @@
+From 87a0a2549281b8172eaf4679fbd4fe7614caab8f Mon Sep 17 00:00:00 2001
+From: Brian Cain <brian.cain@oss.qualcomm.com>
+Date: Wed, 25 Nov 2026 00:46:15 -0600
+Subject: [PATCH 1/8] h2: loadlinux: set syscfg through the hwconfig trap
+
+loadlinux wrote syscfg with inline assembly before starting the Linux VM.
+Since 77bcdb60 ("Run booter in Guest mode") the boot thread runs in user
+mode (BOOT_THREAD_SSR sets SSR.UM), so that privileged write faults.  The
+fault handler does not return to loadlinux and the boot hangs after
+"linux: vm set up", before "linux: booted".
+
+Set the same two bits through h2_hwconfig_syscfg_set(), as the booter
+already does.  The DMT and BQ values are unchanged.
+
+Signed-off-by: Brian Cain <brian.cain@oss.qualcomm.com>
+---
+ linux/loadlinux.c | 14 ++------------
+ 1 file changed, 2 insertions(+), 12 deletions(-)
+
+diff --git a/linux/loadlinux.c b/linux/loadlinux.c
+index f660ede5..d7e88db8 100644
+--- a/linux/loadlinux.c
++++ b/linux/loadlinux.c
+@@ -175,18 +175,8 @@ unsigned long boot_linux(char fname[]) {
+ #endif
+ 
+ 	/* FIXME: set up I$ prefetch and DMT for linux */
+-	unsigned long val;
+-	__asm__ __volatile__ 
+-		(
+-		 /* " %0 = usr\n" */
+-		 /* " %0 = setbit(%0, #16)\n"  // I$ prefetch */  // Linux needs to set this
+-		 /* " usr = %0\n" */
+-		 " %0 = syscfg\n"
+-		 " %0 = setbit(%0, #15)\n"  // DMT
+-		 " %0 = clrbit(%0, #13)\n"  // BQ
+-		 " syscfg = %0\n"
+-		 : "=&r" (val)
+-		 );
++	/* syscfg is privileged; the boot VM runs in user mode, so set it through hwconfig */
++	if (h2_hwconfig_syscfg_set((h2_info(INFO_SYSCFG) | SYSCFG_DMT) & ~SYSCFG_BQ) == -1) FAIL("syscfg");
+ 	if (h2_vmboot(linux_stext, &linux_vcpu_stacks[0][VCPU_STACK_SIZE - 1],
+ 								0, LINUX_VM_PRIO, linux_vm) == -1) FAIL("linux vmboot");
+ 

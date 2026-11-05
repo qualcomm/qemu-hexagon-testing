@@ -1,10 +1,8 @@
-From 7a716b8fd9ddefc11b2e02752a5f7d4b86a954cf Mon Sep 17 00:00:00 2001
+From 9786b3e010fc3d317d9736ccae7e6a5798ef073e Mon Sep 17 00:00:00 2001
 From: Brian Cain <brian.cain@oss.qualcomm.com>
-Date: Fri, 25 Sep 2026 14:25:56 -0500
-Subject: [PATCH] h2: loadlinux: give the Linux VM a VCPU for every running
+Date: Wed, 25 Nov 2026 00:46:15 -0600
+Subject: [PATCH 5/8] h2: loadlinux: give the Linux VM a VCPU for every running
  hardware thread
-Content-Type: text/plain; charset="utf-8"
-Content-Transfer-Encoding: 8bit
 
 The Linux VM was always created with four VCPUs, however many hardware
 threads the core has.  Size it from the mask of running hardware threads
@@ -19,7 +17,7 @@ Signed-off-by: Brian Cain <brian.cain@oss.qualcomm.com>
  1 file changed, 9 insertions(+), 4 deletions(-)
 
 diff --git a/linux/loadlinux.c b/linux/loadlinux.c
-index 88eb58c7..b17efbbc 100644
+index cc6926df..5bd62aad 100644
 --- a/linux/loadlinux.c
 +++ b/linux/loadlinux.c
 @@ -21,7 +21,6 @@

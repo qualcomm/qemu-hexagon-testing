@@ -1,9 +1,7 @@
-From a9a74fc10984716feacb1ada3e80f37367a10af3 Mon Sep 17 00:00:00 2001
+From a194b7ec33b6b4fee829d757fab56437a3643504 Mon Sep 17 00:00:00 2001
 From: Brian Cain <brian.cain@oss.qualcomm.com>
-Date: Sun, 4 Oct 2026 15:03:47 -0500
-Subject: [PATCH] h2: report success when shutting down after guest exit
-Content-Type: text/plain; charset="utf-8"
-Content-Transfer-Encoding: 8bit
+Date: Wed, 25 Nov 2026 00:46:15 -0600
+Subject: [PATCH 7/8] h2: report success when shutting down after guest exit
 
 QEMU exits with thread 0's r2 once every hw thread has stopped.  Zero r2
 before stop() on the SHUTDOWN_AFTER_GUEST_EXIT shutdown path, both in the
@@ -18,10 +16,10 @@ Signed-off-by: Brian Cain <brian.cain@oss.qualcomm.com>
  2 files changed, 14 insertions(+), 5 deletions(-)
 
 diff --git a/kernel/event/error/error.ref.S b/kernel/event/error/error.ref.S
-index 1b392303..d3849607 100644
+index 6c5eec0d..1c62ae76 100644
 --- a/kernel/event/error/error.ref.S
 +++ b/kernel/event/error/error.ref.S
-@@ -191,6 +191,9 @@ FUNC_END H2K_fatal_crash
+@@ -167,6 +167,9 @@ FUNC_END H2K_fatal_crash
  FUNC_START H2K_handle_nmi .text.vm.error .p2align 2
  #ifdef NMI_STOP
  	r1=##0xe0f0beef
@@ -32,10 +30,10 @@ index 1b392303..d3849607 100644
  #else
  
 diff --git a/kernel/thread/stop/stop.ref.c b/kernel/thread/stop/stop.ref.c
-index 9d0ad411..907acad3 100644
+index 6424aaad..c9b450dd 100644
 --- a/kernel/thread/stop/stop.ref.c
 +++ b/kernel/thread/stop/stop.ref.c
-@@ -27,6 +27,10 @@
+@@ -24,6 +24,10 @@
   * stop() via the NMI_STOP handler (which this build option pulls in), then
   * stop this hw thread too.  Never returns.
   *
@@ -46,7 +44,7 @@ index 9d0ad411..907acad3 100644
   * Deliberately targets MAX_HTHREADS_MASK (every hw thread this build can
   * possibly have started) rather than H2K_gp->hthreads_mask: the latter is
   * a one-shot modectl readback taken right after hwthreads_mask() issues
-@@ -35,8 +39,8 @@
+@@ -32,8 +36,8 @@
   * race, not a complete picture.  NMI-ing a thread that was never started
   * is a harmless no-op.
   */
@@ -57,21 +55,21 @@ index 9d0ad411..907acad3 100644
  {
  	u32_t others_mask = MAX_HTHREADS_MASK & ~(1u << get_hwtnum());
  
-@@ -50,9 +54,11 @@ static void H2K_hw_shutdown(s32_t status)
+@@ -47,9 +51,11 @@ static void H2K_hw_shutdown(s32_t status)
  	for (;;) {
  		asm volatile
  			(
 -			 " stop(%0)\n"
 +			 " r2 = #0\n"
 +			 " stop(r2)\n"
++			 :
  			 :
 -			 : "r"(status)
-+			 :
 +			 : "r2"
  			 );
  	}
  }
-@@ -91,7 +97,7 @@ void H2K_thread_stop_withlock(s32_t status, H2K_thread_context *me)
+@@ -87,7 +93,7 @@ void H2K_thread_stop_withlock(s32_t status, H2K_thread_context *me)
  			H2K_mem_alloc_free(vmblock);
  #ifdef SHUTDOWN_AFTER_GUEST_EXIT
  			BKL_UNLOCK();

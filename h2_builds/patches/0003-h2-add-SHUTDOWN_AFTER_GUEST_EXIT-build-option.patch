@@ -1,9 +1,7 @@
-From 167e4be5eee3b2be7b92cec79cb16b05bb8380c8 Mon Sep 17 00:00:00 2001
+From 490068d123c73a37111256102c310cc1be31cca9 Mon Sep 17 00:00:00 2001
 From: Brian Cain <brian.cain@oss.qualcomm.com>
-Date: Fri, 17 Jul 2026 22:18:50 -0500
-Subject: [PATCH] h2: add SHUTDOWN_AFTER_GUEST_EXIT build option
-Content-Type: text/plain; charset="utf-8"
-Content-Transfer-Encoding: 8bit
+Date: Wed, 25 Nov 2026 00:46:15 -0600
+Subject: [PATCH 3/8] h2: add SHUTDOWN_AFTER_GUEST_EXIT build option
 
 When the root VM (the boot VM, which has no parent) drains its last CPU,
 H2K_thread_stop() previously just freed the vmblock and idled the calling
@@ -25,10 +23,10 @@ Signed-off-by: Brian Cain <brian.cain@oss.qualcomm.com>
  4 files changed, 72 insertions(+)
 
 diff --git a/kernel/Makefile b/kernel/Makefile
-index 394fb41b..e6812b72 100644
+index 9f1f27f1..7f287b50 100644
 --- a/kernel/Makefile
 +++ b/kernel/Makefile
-@@ -25,6 +25,13 @@ ifdef NULL_ANGEL_TRAP
+@@ -31,6 +31,13 @@ ifdef NULL_ANGEL_TRAP
  CFLAGS += -DNULL_ANGEL_TRAP
  endif
  
@@ -43,10 +41,10 @@ index 394fb41b..e6812b72 100644
  CFLAGS += -DDEBUG
  endif
 diff --git a/kernel/thread/stop/stop.ref.c b/kernel/thread/stop/stop.ref.c
-index e77bfc2a..9d0ad411 100644
+index e6330e9d..6424aaad 100644
 --- a/kernel/thread/stop/stop.ref.c
 +++ b/kernel/thread/stop/stop.ref.c
-@@ -17,6 +17,47 @@
+@@ -14,6 +14,47 @@
  #include <id.h>
  #include <alloc.h>
  
@@ -94,7 +92,7 @@ index e77bfc2a..9d0ad411 100644
  void H2K_thread_stop(s32_t status, H2K_thread_context *me)
  {
  	BKL_LOCK();
-@@ -48,6 +89,11 @@ void H2K_thread_stop_withlock(s32_t status, H2K_thread_context *me)
+@@ -44,6 +85,11 @@ void H2K_thread_stop_withlock(s32_t status, H2K_thread_context *me)
  			/* Can't free immediately because H2K_switch reads from *me */
  			/* EJP: I think this is OK now if we dosched(NULL,htnum)? */
  			H2K_mem_alloc_free(vmblock);
@@ -105,12 +103,12 @@ index e77bfc2a..9d0ad411 100644
 +#endif
  		}
  	}
- 	/* If we dosched(NULL,get_hwtnum()) I think we can remove special cases in free() */
+ 	/* Break the reap recursion before scheduling another dying thread. */
 diff --git a/linux/loadlinux.c b/linux/loadlinux.c
-index b462fb7f..7abddeea 100644
+index 5f46f6db..d3a8c10e 100644
 --- a/linux/loadlinux.c
 +++ b/linux/loadlinux.c
-@@ -346,5 +346,20 @@ int main(int argc, char *argv[]) {
+@@ -325,5 +325,20 @@ int main(int argc, char *argv[]) {
  		h2_vmfree(linux_vm);
  	} while (status == VM_STATUS_REBOOT);
  

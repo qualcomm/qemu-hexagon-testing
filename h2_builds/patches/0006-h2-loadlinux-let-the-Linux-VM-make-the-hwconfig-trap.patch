@@ -1,9 +1,7 @@
-From 581928d806445264c77904fcef05be0728deafa1 Mon Sep 17 00:00:00 2001
+From 1f1b02398f698d46b6fb18b47de65120e3435cf7 Mon Sep 17 00:00:00 2001
 From: Brian Cain <brian.cain@oss.qualcomm.com>
-Date: Fri, 25 Sep 2026 16:02:03 -0500
-Subject: [PATCH] h2: loadlinux: let the Linux VM make the hwconfig trap
-Content-Type: text/plain; charset="utf-8"
-Content-Transfer-Encoding: 8bit
+Date: Wed, 25 Nov 2026 00:46:15 -0600
+Subject: [PATCH 6/8] h2: loadlinux: let the Linux VM make the hwconfig trap
 
 The Linux VM was allowed only the angel trap, so its hwconfig trap was
 reflected back to it as an event and did nothing.  That trap is how a
@@ -19,7 +17,7 @@ Signed-off-by: Brian Cain <brian.cain@oss.qualcomm.com>
  1 file changed, 8 insertions(+), 1 deletion(-)
 
 diff --git a/linux/loadlinux.c b/linux/loadlinux.c
-index b17efbbc..ac9cc0b2 100644
+index 5bd62aad..7e1050c7 100644
 --- a/linux/loadlinux.c
 +++ b/linux/loadlinux.c
 @@ -29,6 +29,13 @@
