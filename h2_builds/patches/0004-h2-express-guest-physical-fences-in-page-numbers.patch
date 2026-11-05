@@ -1,9 +1,7 @@
-From 79c4fa339bb8da1828532de440a71dd5df89b343 Mon Sep 17 00:00:00 2001
+From cbcb73a9d489f7f11c2863d3fa034110e11a5749 Mon Sep 17 00:00:00 2001
 From: Brian Cain <brian.cain@oss.qualcomm.com>
-Date: Thu, 30 Jul 2026 15:42:43 -0500
-Subject: [PATCH] h2: express guest physical fences in page numbers
-Content-Type: text/plain; charset="utf-8"
-Content-Transfer-Encoding: 8bit
+Date: Wed, 25 Nov 2026 00:46:15 -0600
+Subject: [PATCH 4/8] h2: express guest physical fences in page numbers
 
 SET_FENCES took u32_t byte addresses and shifted them down itself, which
 capped the physical range a guest could be given at 4GB - the FIXME the
@@ -23,10 +21,10 @@ Signed-off-by: Brian Cain <brian.cain@oss.qualcomm.com>
  4 files changed, 23 insertions(+), 7 deletions(-)
 
 diff --git a/booter/booter.c b/booter/booter.c
-index 6e18facf..b088a3c1 100644
+index f4635168..54ffecf7 100644
 --- a/booter/booter.c
 +++ b/booter/booter.c
-@@ -1116,7 +1116,10 @@ void config_vm(unsigned int idx) {
+@@ -1474,7 +1474,10 @@ void config_vm(unsigned int idx) {
  	}
  
  	if (trans == H2K_ASID_TRANS_TYPE_OFFSET) {
@@ -54,7 +52,7 @@ index 9e43d305..59e78641 100644
  
  	h2_vmboot(vmmain, &main_thread_stack[STACK_SIZE - 1], 0, 0, vm);
 diff --git a/kernel/traps/config/config.ref.c b/kernel/traps/config/config.ref.c
-index 34157434..c4840886 100644
+index 1bd61aeb..f229c9c8 100644
 --- a/kernel/traps/config/config.ref.c
 +++ b/kernel/traps/config/config.ref.c
 @@ -215,9 +215,12 @@ static u32_t H2K_config_vmblock_init_set_fences(H2K_vmblock_t *vmblock, u32_t vm
@@ -74,7 +72,7 @@ index 34157434..c4840886 100644
  	vmblock->fence_lo = arg1;
  	vmblock->fence_hi = arg2;
 diff --git a/linux/loadlinux.c b/linux/loadlinux.c
-index 7abddeea..88eb58c7 100644
+index d3a8c10e..cc6926df 100644
 --- a/linux/loadlinux.c
 +++ b/linux/loadlinux.c
 @@ -34,6 +34,15 @@

@@ -1,0 +1,89 @@
+From b9efb093be239549e1e315aa02f20483f23aa404 Mon Sep 17 00:00:00 2001
+From: Brian Cain <brian.cain@oss.qualcomm.com>
+Date: Wed, 25 Nov 2026 00:46:15 -0600
+Subject: [PATCH 8/8] h2: vmwork: keep VMWORK set while guest interrupts are
+ disabled
+
+06e67bbb (VMOP_KILL_THREAD) made H2K_vm_do_work_withlock clear VMWORK
+unconditionally.  Before it, the bit was cleared only when the guest had
+interrupts enabled.
+
+With that change, a Linux guest on the qcs6490-cdsp QEMU machine mostly
+stops booting with four VCPUs: the kernel prints nothing, loadlinux
+reports "linux: booted", and every hardware thread ends up idle in
+H2K_wait_forever.  With one or two VCPUs it still boots.  In twelve boots
+the build with 06e67bbb reached the Linux console 0 times; the same build
+with the guard below restored did so 12 times.  Builds without 06e67bbb
+boot every time.
+
+Restore the IE guard.  The KILL check at the top of the function still
+runs first and never returns, so the killed-thread escape that 06e67bbb
+fixed stays fixed.
+
+The futex, popup and intpool blocking primitives gate on VMWORK alone
+since 06e67bbb, so while a thread runs with interrupts disabled and
+something pending they fail and the caller retries, where before
+06e67bbb they would have blocked.  The vmwork unit test case that asserted
+VMWORK is cleared on the IE-disabled path is updated to expect it set.
+
+Signed-off-by: Brian Cain <brian.cain@oss.qualcomm.com>
+---
+ kernel/vm/vmwork/test/test.c  |  2 +-
+ kernel/vm/vmwork/vmwork.ref.c |  8 +++++++-
+ kernel/vm/vmwork/vmwork.spec  | 14 +++++++++-----
+ 3 files changed, 17 insertions(+), 7 deletions(-)
+
+diff --git a/kernel/vm/vmwork/test/test.c b/kernel/vm/vmwork/test/test.c
+index 22796c91..eacd5b0c 100644
+--- a/kernel/vm/vmwork/test/test.c
++++ b/kernel/vm/vmwork/test/test.c
+@@ -111,7 +111,7 @@ int main()
+ 	if (TH_saw_interrupt_get) FAIL("Saw interrupt get while !IE");
+ 	if (!TH_saw_interrupt_peek) FAIL("Didn't see interrupt peek while !IE");
+ 	if (TH_saw_vm_event) FAIL("Did a VM event");
+-	if (a.vmstatus & H2K_VMSTATUS_VMWORK) FAIL("VMWORK not cleared (no IE)");
++	if (!(a.vmstatus & H2K_VMSTATUS_VMWORK)) FAIL("VMWORK cleared while !IE");
+ 	TH_saw_thread_stop = TH_saw_vm_event = TH_saw_interrupt_get = TH_saw_interrupt_peek = 0;
+ 
+ 	a.vmstatus = H2K_VMSTATUS_IE | H2K_VMSTATUS_VMWORK;
+diff --git a/kernel/vm/vmwork/vmwork.ref.c b/kernel/vm/vmwork/vmwork.ref.c
+index 05d824ae..eec16331 100644
+--- a/kernel/vm/vmwork/vmwork.ref.c
++++ b/kernel/vm/vmwork/vmwork.ref.c
+@@ -21,6 +21,12 @@ s32_t H2K_vm_do_work_withlock(H2K_thread_context *me)
+ 
+ 	if (!(me->vmstatus & H2K_VMSTATUS_VMWORK)) return -1;
+ 
+-	H2K_atomic_clrbit(&me->atomic_status_word,H2K_VMSTATUS_VMWORK_BIT);
++	/*
++	 * With guest interrupts disabled, leave VMWORK set: the guest may go to
++	 * vmwait before it re-enables them.
++	 */
++	if (me->vmstatus & H2K_VMSTATUS_IE) {
++		H2K_atomic_clrbit(&me->atomic_status_word,H2K_VMSTATUS_VMWORK_BIT);
++	}
+ 	return H2K_vm_check_interrupts(me);
+ }
+diff --git a/kernel/vm/vmwork/vmwork.spec b/kernel/vm/vmwork/vmwork.spec
+index 13402ba5..6e73f0cc 100644
+--- a/kernel/vm/vmwork/vmwork.spec
++++ b/kernel/vm/vmwork/vmwork.spec
+@@ -19,8 +19,12 @@ the normal kill path does not return.  Otherwise, if the
+ ``H2K_VMSTATUS_VMWORK`` bit is clear, returns ``-1`` without changing the
+ context.
+ 
+-When VMWORK is set, atomically clears the VMWORK bit and calls
+-:c:func:`H2K_vm_check_interrupts()`.  That check either consumes and raises a
+-pending interrupt when guest interrupts are enabled, or only observes a
+-pending interrupt when they are disabled.  The result of that check is returned
+-to the caller.
++When VMWORK is set and guest interrupts are enabled (``H2K_VMSTATUS_IE``),
++atomically clears the VMWORK bit and calls
++:c:func:`H2K_vm_check_interrupts()`, which consumes and raises a pending
++interrupt.  When guest interrupts are disabled, the VMWORK bit is left set,
++because the guest may go to ``vmwait`` before it re-enables them; the check
++then only observes a pending interrupt.  Either way, the result of
++:c:func:`H2K_vm_check_interrupts()` is returned to the caller.  A block
++primitive that gates on VMWORK therefore fails and is retried while the guest
++runs with interrupts disabled and something pending.
+\ No newline at end of file

@@ -23,7 +23,7 @@ cfg=$here/configs/$machine.mk
 SDK=${SDK:-/opt/Hexagon_SDK/6.7.0.0}
 TOOLS=${TOOLS:-$SDK/tools/HEXAGON_Tools/21.0.04/Tools}
 H2_REPO=${H2_REPO:-https://github.com/qualcomm/hexagon-hypervisor}
-H2_REF=${H2_REF:-23d5bde4313c1e63ba64dd5d7f542b1055188ef8}
+H2_REF=${H2_REF:-ce77e35d815c2cbd72a3967f058f8a60083a7d5c}
 H2_SRC=${H2_SRC:-$here/build/h2-src}
 export PATH=$TOOLS/bin:$PATH
 
@@ -46,7 +46,9 @@ install=$src/artifacts/v$ARCHV/opt/install
 # NULL_ANGEL_TRAP=1, SHUTDOWN_AFTER_GUEST_EXIT=1: the same as toolchain_for_hexagon.
 common=(USE_PKW=0 ARCHV="$ARCHV" NULL_ANGEL_TRAP=1 SHUTDOWN_AFTER_GUEST_EXIT=1
         H2K_LOAD_ADDR="$H2K_LOAD_ADDR" H2K_GUEST_START="$H2K_GUEST_START")
-make -C "$src" -j"$(nproc)" TARGET=opt "${common[@]}" > "$work/build.log" 2>&1 \
+# Name the build target: upstream's top-level makefile forwards to makefile.real,
+# and its default goal does nothing.
+make -C "$src" -j"$(nproc)" TARGET=opt "${common[@]}" build > "$work/build.log" 2>&1 \
     || { tail -30 "$work/build.log" >&2; echo "FAIL $machine: h2 build" >&2; exit 1; }
 
 if [ -n "${LINUX_LINK_ADDR:-}" ]; then
