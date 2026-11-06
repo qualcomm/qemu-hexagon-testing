@@ -307,6 +307,61 @@ static void test_fetch_cause(void)
     printf("%s fetch_cause\n", err == previous_errors ? "PASS" : "FAIL");
 }
 
+extern uint32_t straddle_sample[];
+extern char straddle_resume[];
+asm(
+    ".text\n"
+    ".global straddle_sample\n"
+    "straddle_sample:\n"
+    "{\n"
+    "    r8 = #7\n"
+    "    r9 = #8\n"
+    "}\n"
+    "{\n"
+    "    r8 = #1\n"
+    "    r9 = #2\n"
+    "    r10 = #3\n"
+    "    r11 = #4\n"
+    "}\n"
+);
+static void test_fetch_pc(void)
+{
+    static uint32_t code[2048] __attribute__((aligned(4096)));
+    unsigned marker;
+    int previous_errors = err;
+    uint64_t entry = tlbr(1);
+
+    fault_count = 0;
+    memset((void *)faults, 0, sizeof(faults));
+    for (unsigned i = 0; i < 6; i++) {
+        code[1020 + i] = straddle_sample[i];
+    }
+    map_page(1, 0x9ba00000, ADDRESS(code));
+    resume_pc = ADDRESS(straddle_resume);
+    asm volatile(
+        "r8 = #0\n"
+        "r0 = ##0x9ba00ff0\n"
+        "jumpr r0\n"
+        ".global straddle_resume\n"
+        "straddle_resume:\n"
+        "%0 = r8\n"
+        : "=r"(marker)
+        :
+        : "r0", "r8", "r9", "r10", "r11", "memory"
+    );
+    /* straddling fetch exception count */
+    check32(fault_count, 1);
+    /* straddling fetch cause */
+    check32(faults[0].cause, 0x61);
+    /* restart at straddling packet */
+    check32(faults[0].pc, 0x9ba00ff8);
+    /* preceding packet retired */
+    check32(marker, 7);
+    tlbw(entry, 1);
+    resume_pc = 0;
+    printf("%s fetch_pc\n", err == previous_errors ? "PASS" : "FAIL");
+}
+
 int main(void)
 {
     test_predicate_read();
@@ -317,7 +372,8 @@ int main(void)
     test_hmx_address();
     test_hlx_disable();
     test_fetch_cause();
+    test_fetch_pc();
     setevb(old_evb);
-    printf("%s packet_tests: 6 cases\n", err ? "FAIL" : "PASS");
+    printf("%s packet_tests: 7 cases\n", err ? "FAIL" : "PASS");
     return err != 0;
 }
