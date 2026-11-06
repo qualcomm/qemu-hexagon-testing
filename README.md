@@ -69,6 +69,22 @@ cmake --build build-systests --target package_hlx_systests
 `build-systests/hlx_systests.tar.gz` contains the five tests for QEMU's
 `V85QA_1` machine.
 
+#### Packet regression tests
+
+`standalone_systests` builds the packet regressions into one V85 binary,
+`packet_tests`. The cases and `main()` are in one source file and use the
+existing checks and standalone event handlers.
+After you configure the standalone build, build and run it with:
+
+```sh
+cmake --build build-systests --target packet_tests
+qemu-system-hexagon -M V85NA_1 -display none \
+  -kernel build-systests/bin/packet_tests
+```
+
+The binary prints one result per case and a final summary. CI installs it
+in the existing `systests_standalone.tar.gz` package.
+
 ### HVX Examples (`sdk_examples/`)
 
 HVX (Hexagon Vector eXtensions) example programs demonstrating vector processing capabilities.
