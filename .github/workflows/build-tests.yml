@@ -183,6 +183,17 @@ jobs:
         echo "Installed files:"
         find build-systests/install -type f | head -20
 
+    - name: Build packet regression tests
+      run: |
+        cmake -S packet_tests -B build-packets \
+          -G Ninja \
+          -DCMAKE_TOOLCHAIN_FILE="${PWD}/cmake/hexagon-standalone.cmake" \
+          -DHEXAGON_ARCH=v85
+        cmake --build build-packets
+        DESTDIR=build-packets/install cmake --install build-packets
+        cmake --build build-packets --target package_packet_tests
+        (cd build-packets && sha256sum packet_tests.tar.gz > packet_tests.tar.gz.sha256)
+
     - name: Build hexagon-arch-tests (semihosting)
       run: |
         cd hexagon-arch-tests
@@ -395,6 +406,15 @@ jobs:
         path: hvx_linux.tar.gz
         retention-days: 90
 
+    - name: Archive packet regression test package
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      with:
+        name: packet-tests-package
+        path: |
+          build-packets/packet_tests.tar.gz
+          build-packets/packet_tests.tar.gz.sha256
+        retention-days: 90
+
     - name: Archive standalone system tests package
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       with:
@@ -582,4 +602,4 @@ jobs:
           gh release create "$TAG_NAME" \
             --title "Release $TAG_NAME" \
             --notes "$CHANGELOG" \
-            artifacts/*.tar.gz h2-files/*
+            artifacts/*.tar.gz artifacts/*.sha256 h2-files/*
