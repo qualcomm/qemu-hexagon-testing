@@ -477,6 +477,56 @@ static void test_fault_validity(void)
     printf("%s fault_validity\n", err == previous_errors ? "PASS" : "FAIL");
 }
 
+extern char inactive_resume[], inactive_mirror[];
+static void test_inactive_badva(void)
+{
+    int previous_errors = err;
+
+    fault_count = 0;
+    memset((void *)faults, 0, sizeof(faults));
+    resume_pc = ADDRESS(inactive_resume);
+    asm volatile(
+        "r0 = ##0xbad10000\n"
+        "badva1 = r0\n"
+        "r0 = ##0x9b900008\n"
+        "r2 = memw(r0)\n"
+        ".global inactive_resume\n"
+        "inactive_resume:\n"
+        :
+        :
+        : "r0", "r2", "memory"
+    );
+    /* inactive BADVA1 preserved */
+    check32(faults[0].va1, 0xbad10000);
+    /* only slot 0 valid */
+    check32((faults[0].ssr >> 20) & 7, 1);
+    resume_pc = ADDRESS(inactive_mirror);
+    asm volatile(
+        "r0 = ##0xbad00000\n"
+        "badva0 = r0\n"
+        "r0 = ##0x9b900008\n"
+        "r1 = ##0x9b901010\n"
+        "p0 = cmp.eq(r0,r1)\n"
+        "{\n"
+        "    r2 = memw(r0)\n"
+        "    if (p0) memw(r1) = r0\n"
+        "}:mem_noshuf\n"
+        ".global inactive_mirror\n"
+        "inactive_mirror:\n"
+        :
+        :
+        : "r0", "r1", "r2", "p0", "memory"
+    );
+    /* inactive address fault count */
+    check32(fault_count, 2);
+    /* inactive BADVA0 preserved */
+    check32(faults[1].va0, 0xbad00000);
+    /* only slot 1 valid */
+    check32((faults[1].ssr >> 20) & 7, 6);
+    resume_pc = 0;
+    printf("%s inactive_badva\n", err == previous_errors ? "PASS" : "FAIL");
+}
+
 int main(void)
 {
     test_predicate_read();
@@ -490,7 +540,8 @@ int main(void)
     test_fetch_pc();
     test_fault_slot();
     test_fault_validity();
+    test_inactive_badva();
     setevb(old_evb);
-    printf("%s packet_tests: 9 cases\n", err ? "FAIL" : "PASS");
+    printf("%s packet_tests: 10 cases\n", err ? "FAIL" : "PASS");
     return err != 0;
 }
