@@ -49,6 +49,7 @@ add_packet_test(pb05_hlx_disable)
 target_compile_options(pb05_hlx_disable PRIVATE -mhlx)
 add_packet_test(pb06_fetch_cause)
 add_packet_test(pb07_fetch_pc)
+add_packet_test(pb08_fault_slot)
 
 # Match the reproducible HLX archive layout used by QEMU functional tests.
 set(PACKET_PACKAGE_FILES "")
