@@ -431,42 +431,53 @@ enum {
 extern void *my_event_vectors;
 
 #define MY_EVENT_HANDLE(name, helper) \
-void name(void) \
+__attribute__((naked)) void name(void) \
 { \
-    asm volatile("crswap(sp, sgp0)\n\t" \
-                 "memd(sp++#8) = r1:0\n\t" \
-                 "memd(sp++#8) = r3:2\n\t" \
-                 "memd(sp++#8) = r5:4\n\t" \
-                 "memd(sp++#8) = r7:6\n\t" \
-                 "memd(sp++#8) = r9:8\n\t" \
-                 "memd(sp++#8) = r11:10\n\t" \
-                 "memd(sp++#8) = r13:12\n\t" \
-                 "memd(sp++#8) = r15:14\n\t" \
-                 "memd(sp++#8) = r17:16\n\t" \
-                 "memd(sp++#8) = r19:18\n\t" \
-                 "memd(sp++#8) = r21:20\n\t" \
-                 "memd(sp++#8) = r23:22\n\t" \
-                 "memd(sp++#8) = r25:24\n\t" \
-                 "memd(sp++#8) = r27:26\n\t" \
-                 "memd(sp++#8) = r31:30\n\t" \
+    /* Save below the stack top, leaving the helper's call stack free. */ \
+    asm volatile( \
+                 "crswap(sp, sgp0)\n\t" \
+                 "sp = add(sp, #-136)\n\t" \
+                 "memd(sp+#0) = r1:0\n\t" \
+                 "memd(sp+#8) = r3:2\n\t" \
+                 "memd(sp+#16) = r5:4\n\t" \
+                 "memd(sp+#24) = r7:6\n\t" \
+                 "memd(sp+#32) = r9:8\n\t" \
+                 "memd(sp+#40) = r11:10\n\t" \
+                 "memd(sp+#48) = r13:12\n\t" \
+                 "memd(sp+#56) = r15:14\n\t" \
+                 "memd(sp+#64) = r17:16\n\t" \
+                 "memd(sp+#72) = r19:18\n\t" \
+                 "memd(sp+#80) = r21:20\n\t" \
+                 "memd(sp+#88) = r23:22\n\t" \
+                 "memd(sp+#96) = r25:24\n\t" \
+                 "memd(sp+#104) = r27:26\n\t" \
+                 "memw(sp+#112) = r28\n\t" \
+                 "memd(sp+#120) = r31:30\n\t" \
+                 "r0 = p3:0\n\t" \
+                 "r1 = usr\n\t" \
+                 "memd(sp+#128) = r1:0\n\t" \
                  "r0 = ssr\n\t" \
                  "call " #helper "\n\t" \
-                 "sp = add(sp, #-8)\n\t" \
-                 "r31:30 = memd(sp++#-8)\n\t" \
-                 "r27:26 = memd(sp++#-8)\n\t" \
-                 "r25:24 = memd(sp++#-8)\n\t" \
-                 "r23:22 = memd(sp++#-8)\n\t" \
-                 "r21:20 = memd(sp++#-8)\n\t" \
-                 "r19:18 = memd(sp++#-8)\n\t" \
-                 "r17:16 = memd(sp++#-8)\n\t" \
-                 "r15:14 = memd(sp++#-8)\n\t" \
-                 "r13:12 = memd(sp++#-8)\n\t" \
-                 "r11:10 = memd(sp++#-8)\n\t" \
-                 "r9:8 = memd(sp++#-8)\n\t" \
-                 "r7:6 = memd(sp++#-8)\n\t" \
-                 "r5:4 = memd(sp++#-8)\n\t" \
-                 "r3:2 = memd(sp++#-8)\n\t" \
-                 "r1:0 = memd(sp)\n\t" \
+                 "r1:0 = memd(sp+#128)\n\t" \
+                 "p3:0 = r0\n\t" \
+                 "usr = r1\n\t" \
+                 "r31:30 = memd(sp+#120)\n\t" \
+                 "r28 = memw(sp+#112)\n\t" \
+                 "r27:26 = memd(sp+#104)\n\t" \
+                 "r25:24 = memd(sp+#96)\n\t" \
+                 "r23:22 = memd(sp+#88)\n\t" \
+                 "r21:20 = memd(sp+#80)\n\t" \
+                 "r19:18 = memd(sp+#72)\n\t" \
+                 "r17:16 = memd(sp+#64)\n\t" \
+                 "r15:14 = memd(sp+#56)\n\t" \
+                 "r13:12 = memd(sp+#48)\n\t" \
+                 "r11:10 = memd(sp+#40)\n\t" \
+                 "r9:8 = memd(sp+#32)\n\t" \
+                 "r7:6 = memd(sp+#24)\n\t" \
+                 "r5:4 = memd(sp+#16)\n\t" \
+                 "r3:2 = memd(sp+#8)\n\t" \
+                 "r1:0 = memd(sp+#0)\n\t" \
+                 "sp = add(sp, #136)\n\t" \
                  "crswap(sp, sgp0);\n\t" \
                  "rte\n\t"); \
 }
