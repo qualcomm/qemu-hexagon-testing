@@ -9,7 +9,7 @@
 #define ADDRESS(x) ((uint32_t)(uintptr_t)(x))
 
 struct packet_fault {
-    uint32_t cause;
+    uint32_t cause, pc;
 };
 
 static volatile struct packet_fault faults[3];
@@ -27,6 +27,12 @@ void record_packet_fault(uint32_t ssr)
                f.cause);
         exit(1);
     }
+    asm volatile(
+        "%0 = elr\n"
+        : "=r"(f.pc)
+        :
+        :
+    );
     faults[n] = f;
     asm volatile(
         "elr = %0\n"
@@ -46,6 +52,16 @@ DEFAULT_EVENT_HANDLE(my_event_handle_trap0, HANDLE_TRAP0_OFFSET)
 DEFAULT_EVENT_HANDLE(my_event_handle_trap1, HANDLE_TRAP1_OFFSET)
 DEFAULT_EVENT_HANDLE(my_event_handle_int, HANDLE_INT_OFFSET)
 DEFAULT_EVENT_HANDLE(my_event_handle_fperror, HANDLE_FPERROR_OFFSET)
+
+static void map_page(unsigned index, uint32_t va, uint32_t pa)
+{
+    uint64_t entry = create_mmu_entry(1, 0, 0, 0, va, 1, 1, 1, 1,
+                                      7, pa, PAGE_4K);
+    tlbw(entry, index);
+    asm volatile(
+        "isync\n"
+    );
+}
 
 static void test_predicate_read(void)
 {
@@ -243,6 +259,54 @@ static void __attribute__((optnone)) test_hlx_disable(void)
     printf("%s hlx_disable\n", err == previous_errors ? "PASS" : "FAIL");
 }
 
+extern uint32_t fetch_sample[];
+extern char fetch_resume[];
+asm(
+    ".text\n"
+    ".global fetch_sample\n"
+    "fetch_sample:\n"
+    "{\n"
+    "    r8 = #1\n"
+    "    r9 = #2\n"
+    "}\n"
+    "{\n"
+    "    r8 = #3\n"
+    "    r9 = #4\n"
+    "}\n"
+);
+static void test_fetch_cause(void)
+{
+    static uint32_t code[2048] __attribute__((aligned(4096)));
+    int previous_errors = err;
+    uint64_t entry = tlbr(1);
+
+    fault_count = 0;
+    memset((void *)faults, 0, sizeof(faults));
+    for (unsigned i = 0; i < 4; i++) {
+        code[1022 + i] = fetch_sample[i];
+    }
+    map_page(1, 0x9ba00000, ADDRESS(code));
+    resume_pc = ADDRESS(fetch_resume);
+    asm volatile(
+        "r0 = ##0x9ba00ff8\n"
+        "jumpr r0\n"
+        ".global fetch_resume\n"
+        "fetch_resume:\n"
+        :
+        :
+        : "r0", "r8", "r9", "memory"
+    );
+    /* fetch exception count */
+    check32(fault_count, 1);
+    /* packet starts on missing page */
+    check32(faults[0].cause, 0x60);
+    /* fetch restart PC */
+    check32(faults[0].pc, 0x9ba01000);
+    tlbw(entry, 1);
+    resume_pc = 0;
+    printf("%s fetch_cause\n", err == previous_errors ? "PASS" : "FAIL");
+}
+
 int main(void)
 {
     test_predicate_read();
@@ -252,7 +316,8 @@ int main(void)
     install_my_event_vectors();
     test_hmx_address();
     test_hlx_disable();
+    test_fetch_cause();
     setevb(old_evb);
-    printf("%s packet_tests: 5 cases\n", err ? "FAIL" : "PASS");
+    printf("%s packet_tests: 6 cases\n", err ? "FAIL" : "PASS");
     return err != 0;
 }
