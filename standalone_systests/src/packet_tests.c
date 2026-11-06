@@ -688,6 +688,101 @@ static void test_store_rollback(void)
     printf("%s store_rollback\n", err == previous_errors ? "PASS" : "FAIL");
 }
 
+extern char vector_resume[], vector_second[], vector_store[];
+static void test_vmemu_fault(void)
+{
+    static uint8_t upper[4096] __attribute__((aligned(4096)));
+    int previous_errors = err;
+    uint32_t saved_ssr;
+    uint64_t entry = tlbr(1);
+
+    asm volatile(
+        "%0 = ssr\n"
+        : "=r"(saved_ssr)
+        :
+        :
+    );
+    fault_count = 0;
+    memset((void *)faults, 0, sizeof(faults));
+    resume_pc = ADDRESS(vector_resume);
+    unsigned marker;
+    asm volatile(
+        "r0 = ssr\n"
+        "r0 = setbit(r0,#31)\n"
+        "ssr = r0\n"
+        "r0 = ##0x9b900f81\n"
+        "r4 = #17\n"
+        "{\n"
+        "    v1 = vmemu(r0)\n"
+        "    r4 = add(r4,#1)\n"
+        "}\n"
+        ".global vector_resume\n"
+        "vector_resume:\n"
+        "%0 = r4\n"
+        : "=r"(marker)
+        :
+        : "r0", "r4", "memory"
+    );
+    /* vector fault rolls back scalar result */
+    check32(marker, 17);
+    /* VMEMU upper load miss */
+    check32(faults[0].cause, 0x70);
+    /* VMEMU upper slot wins */
+    check32((faults[0].ssr >> 20) & 7, 7);
+    /* VMEMU lower BADVA */
+    check32(faults[0].va0, 0x9b900f81);
+    /* VMEMU upper BADVA */
+    check32(faults[0].va1, 0x9b901001);
+    /* VMEMU upper BADVA alias */
+    check32(faults[0].badva, 0x9b901001);
+    map_page(1, 0x9b901000, ADDRESS(upper));
+    resume_pc = ADDRESS(vector_second);
+    asm volatile(
+        "r0 = ##0x9b900f81\n"
+        "v1 = vmemu(r0)\n"
+        ".global vector_second\n"
+        "vector_second:\n"
+        :
+        :
+        : "r0", "memory"
+    );
+    /* VMEMU lower miss after upper mapped */
+    check32((faults[1].ssr >> 20) & 7, 3);
+    /* VMEMU lower address unchanged */
+    check32(faults[1].va0, 0x9b900f81);
+    /* VMEMU upper address unchanged */
+    check32(faults[1].va1, 0x9b901001);
+    resume_pc = ADDRESS(vector_store);
+    asm volatile(
+        "r0 = ##0x9b900f82\n"
+        "vmemu(r0) = v2\n"
+        ".global vector_store\n"
+        "vector_store:\n"
+        :
+        :
+        : "r0", "memory"
+    );
+    /* VMEMU fault case count */
+    check32(fault_count, 3);
+    /* VMEMU store miss */
+    check32(faults[2].cause, 0x71);
+    /* VMEMU store both addresses valid */
+    check32((faults[2].ssr >> 20) & 7, 3);
+    /* VMEMU store lower BADVA */
+    check32(faults[2].va0, 0x9b900f82);
+    /* VMEMU store upper BADVA */
+    check32(faults[2].va1, 0x9b901002);
+    tlbw(entry, 1);
+    asm volatile(
+        "ssr = %0\n"
+        :
+        : "r"(saved_ssr)
+        : "memory"
+    );
+    resume_pc = 0;
+    printf("%s vmemu_fault\n", err == previous_errors ? "PASS" : "FAIL");
+}
+
 int main(void)
 {
     test_predicate_read();
@@ -705,7 +800,8 @@ int main(void)
     test_store_priority();
     test_alignment_priority();
     test_store_rollback();
+    test_vmemu_fault();
     setevb(old_evb);
-    printf("%s packet_tests: 13 cases\n", err ? "FAIL" : "PASS");
+    printf("%s packet_tests: 14 cases\n", err ? "FAIL" : "PASS");
     return err != 0;
 }
