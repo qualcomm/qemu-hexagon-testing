@@ -41,6 +41,7 @@ function(add_packet_test name)
 endfunction()
 
 add_packet_test(pb01_predicate_read)
+add_packet_test(pb02_usr_mask)
 
 # Match the reproducible HLX archive layout used by QEMU functional tests.
 set(PACKET_PACKAGE_FILES "")
