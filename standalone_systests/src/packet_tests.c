@@ -50,10 +50,39 @@ static void test_usr_mask(void)
     printf("%s usr_mask\n", err == previous_errors ? "PASS" : "FAIL");
 }
 
+static void test_call_priority(void)
+{
+    unsigned lr;
+    int previous_errors = err;
+
+    asm volatile(
+        "r12 = r31\n"
+        "r31 = ##0x12345678\n"
+        "r0 = #0\n"
+        "p0 = cmp.eq(r0,r0)\n"
+        "{\n"
+        "    if (p0) jump 1f\n"
+        "    call 2f\n"
+        "}\n"
+        "2:\n"
+        "r31 = #0\n"
+        "1:\n"
+        "%0 = r31\n"
+        "r31 = r12\n"
+        : "=&r"(lr)
+        :
+        : "r0", "r12", "r31", "p0"
+    );
+    /* losing call preserves LR */
+    check32(lr, 0x12345678);
+    printf("%s call_priority\n", err == previous_errors ? "PASS" : "FAIL");
+}
+
 int main(void)
 {
     test_predicate_read();
     test_usr_mask();
-    printf("%s packet_tests: 2 cases\n", err ? "FAIL" : "PASS");
+    test_call_priority();
+    printf("%s packet_tests: 3 cases\n", err ? "FAIL" : "PASS");
     return err != 0;
 }
