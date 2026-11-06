@@ -69,6 +69,14 @@ cmake --build build-systests --target package_hlx_systests
 `build-systests/hlx_systests.tar.gz` contains the five tests for QEMU's
 `V85QA_1` machine.
 
+### Packet regression tests (`packet_tests/`)
+
+The bare-metal V85 tests cover packet regressions. They use the shared
+standalone CMake toolchain, without SDK runtime libraries. See
+[packet_tests/README.md](packet_tests/README.md) for build and test commands.
+CI builds and installs them, then publishes `packet_tests.tar.gz` and its
+SHA-256 file through the existing artifact and tagged-release workflow.
+
 ### HVX Examples (`sdk_examples/`)
 
 HVX (Hexagon Vector eXtensions) example programs demonstrating vector processing capabilities.
