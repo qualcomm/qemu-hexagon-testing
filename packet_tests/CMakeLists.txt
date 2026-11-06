@@ -51,6 +51,7 @@ add_packet_test(pb06_fetch_cause)
 add_packet_test(pb07_fetch_pc)
 add_packet_test(pb08_fault_slot)
 add_packet_test(pb09_fault_validity)
+add_packet_test(pb10_inactive_badva)
 
 # Match the reproducible HLX archive layout used by QEMU functional tests.
 set(PACKET_PACKAGE_FILES "")
