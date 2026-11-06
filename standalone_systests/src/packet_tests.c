@@ -176,6 +176,73 @@ static void test_hmx_address(void)
     printf("%s hmx_address\n", err == previous_errors ? "PASS" : "FAIL");
 }
 
+extern char hlx_resume[];
+static void __attribute__((optnone)) test_hlx_disable(void)
+{
+    static uint16_t input[1024] __attribute__((aligned(2048)));
+    static uint16_t output[1024] __attribute__((aligned(2048)));
+    int previous_errors = err;
+    uint32_t saved_ccr;
+
+    asm volatile(
+        "%0 = ccr\n"
+        : "=r"(saved_ccr)
+        :
+        :
+    );
+    fault_count = 0;
+    memset((void *)faults, 0, sizeof(faults));
+    for (unsigned i = 0; i < 1024; i++) {
+        input[i] = i;
+    }
+    resume_pc = ADDRESS(hlx_resume);
+    asm volatile(
+        "r0 = ccr\n"
+        "r0 = setbit(r0,#28)\n"
+        "ccr = r0\n"
+        "r0 = %0\n"
+        "r26 = ccr\n"
+        "r26 = clrbit(r26,#28)\n"
+        "{\n"
+        "    ccr = r26\n"
+        "    L0.tmp = mem(r0)\n"
+        "    L1.h = add(L0.h,L0.h)\n"
+        "}\n"
+        "{\n"
+        "    L0.tmp = mem(r0)\n"
+        "    L1.h = add(L0.h,L0.h)\n"
+        "}\n"
+        ".global hlx_resume\n"
+        "hlx_resume:\n"
+        "r26 = setbit(r26,#28)\n"
+        "ccr = r26\n"
+        "r1 = %1\n"
+        "{\n"
+        "    L2.h = add(L1.h,L1.h)\n"
+        "    mem(r1) = L2.new\n"
+        "}\n"
+        :
+        : "r"(input), "r"(output)
+        : "r0", "r1", "r26", "memory"
+    );
+    /* HLX exception count */
+    check32(fault_count, 1);
+    /* HLX disabled in next packet */
+    check32(faults[0].cause, 0x19);
+    for (unsigned i = 0; i < 1024; i++) {
+        /* first packet HLX result committed */
+        check32(output[i], i * 4);
+    }
+    asm volatile(
+        "ccr = %0\n"
+        :
+        : "r"(saved_ccr)
+        : "memory"
+    );
+    resume_pc = 0;
+    printf("%s hlx_disable\n", err == previous_errors ? "PASS" : "FAIL");
+}
+
 int main(void)
 {
     test_predicate_read();
@@ -184,7 +251,8 @@ int main(void)
     enter_kernel_mode();
     install_my_event_vectors();
     test_hmx_address();
+    test_hlx_disable();
     setevb(old_evb);
-    printf("%s packet_tests: 4 cases\n", err ? "FAIL" : "PASS");
+    printf("%s packet_tests: 5 cases\n", err ? "FAIL" : "PASS");
     return err != 0;
 }

@@ -189,7 +189,7 @@ foreach(PROGRAM ${STANDALONE_PROGRAMS})
     add_systest_program(${PROGRAM})
 endforeach()
 
-target_compile_options(packet_tests PRIVATE -O2 -mv85 -mhmx)
+target_compile_options(packet_tests PRIVATE -O2 -mv85 -mhmx -mhlx)
 target_link_options(packet_tests PRIVATE -mv85)
 
 # Keep the inline assembly intrinsics at the same optimization level as QEMU's
