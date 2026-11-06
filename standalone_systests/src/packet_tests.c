@@ -1,10 +1,51 @@
 /* SPDX-License-Identifier: BSD-3-Clause-Clear */
 
 #include <stdio.h>
-#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
 
-int err;
-#include "hex_test.h"
+#include "mmu.h"
+
+#define ADDRESS(x) ((uint32_t)(uintptr_t)(x))
+
+struct packet_fault {
+    uint32_t cause;
+};
+
+static volatile struct packet_fault faults[3];
+static volatile unsigned fault_count;
+static uint32_t resume_pc;
+
+/* The shared wrapper preserves registers across the C fault recorder. */
+void record_packet_fault(uint32_t ssr)
+{
+    unsigned n = fault_count++;
+    struct packet_fault f = { .cause = ssr & 255 };
+
+    if (n >= 3 || !resume_pc) {
+        printf("FAIL unexpected exception 0x%" PRIx32 "\n",
+               f.cause);
+        exit(1);
+    }
+    faults[n] = f;
+    asm volatile(
+        "elr = %0\n"
+        :
+        : "r"(resume_pc)
+        :
+    );
+}
+
+MY_EVENT_HANDLE(my_event_handle_error, record_packet_fault)
+MY_EVENT_HANDLE(my_event_handle_tlbmissrw, record_packet_fault)
+MY_EVENT_HANDLE(my_event_handle_tlbmissx, record_packet_fault)
+DEFAULT_EVENT_HANDLE(my_event_handle_reset, HANDLE_RESET_OFFSET)
+DEFAULT_EVENT_HANDLE(my_event_handle_nmi, HANDLE_NMI_OFFSET)
+DEFAULT_EVENT_HANDLE(my_event_handle_rsvd, HANDLE_RSVD_OFFSET)
+DEFAULT_EVENT_HANDLE(my_event_handle_trap0, HANDLE_TRAP0_OFFSET)
+DEFAULT_EVENT_HANDLE(my_event_handle_trap1, HANDLE_TRAP1_OFFSET)
+DEFAULT_EVENT_HANDLE(my_event_handle_int, HANDLE_INT_OFFSET)
+DEFAULT_EVENT_HANDLE(my_event_handle_fperror, HANDLE_FPERROR_OFFSET)
 
 static void test_predicate_read(void)
 {
@@ -78,11 +119,72 @@ static void test_call_priority(void)
     printf("%s call_priority\n", err == previous_errors ? "PASS" : "FAIL");
 }
 
+extern char hmx_resume[];
+static void test_hmx_address(void)
+{
+    unsigned marker;
+    int previous_errors = err;
+    uint32_t saved_ssr;
+
+    asm volatile(
+        "%0 = ssr\n"
+        : "=r"(saved_ssr)
+        :
+        :
+    );
+    fault_count = 0;
+    memset((void *)faults, 0, sizeof(faults));
+    resume_pc = ADDRESS(hmx_resume);
+    asm volatile(
+        "r4 = ssr\n"
+        "r4 = setbit(r4,#26)\n"
+        "ssr = r4\n"
+        "r0 = cfgbase\n"
+        "r0 = asl(r0,#5)\n"
+        "r1 = #56\n"
+        "r0 = memw_phys(r1,r0)\n"
+        "r0 = asl(r0,#16)\n"
+        "r1 = #0\n"
+        "r2 = #0\n"
+        "r3 = #0\n"
+        "r4 = #17\n"
+        "{\n"
+        "    activation.ub = mxmem(r0,r1)\n"
+        "    weight.b = mxmem(r2,r3)\n"
+        "    r4 = add(r4,#1)\n"
+        "}\n"
+        ".global hmx_resume\n"
+        "hmx_resume:\n"
+        "%0 = r4\n"
+        : "=r"(marker)
+        :
+        : "r0", "r1", "r2", "r3", "r4", "memory"
+    );
+    /* HMX exception count */
+    check32(fault_count, 1);
+    /* HMX address error */
+    check32(faults[0].cause, 0x26);
+    /* faulting HMX packet does not commit */
+    check32(marker, 17);
+    asm volatile(
+        "ssr = %0\n"
+        :
+        : "r"(saved_ssr)
+        : "memory"
+    );
+    resume_pc = 0;
+    printf("%s hmx_address\n", err == previous_errors ? "PASS" : "FAIL");
+}
+
 int main(void)
 {
     test_predicate_read();
     test_usr_mask();
     test_call_priority();
-    printf("%s packet_tests: 3 cases\n", err ? "FAIL" : "PASS");
+    enter_kernel_mode();
+    install_my_event_vectors();
+    test_hmx_address();
+    setevb(old_evb);
+    printf("%s packet_tests: 4 cases\n", err ? "FAIL" : "PASS");
     return err != 0;
 }
