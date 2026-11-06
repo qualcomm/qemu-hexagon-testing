@@ -9,7 +9,7 @@
 #define ADDRESS(x) ((uint32_t)(uintptr_t)(x))
 
 struct packet_fault {
-    uint32_t cause, pc, ssr, va1, badva;
+    uint32_t cause, pc, ssr, va0, va1, badva;
 };
 
 static volatile struct packet_fault faults[3];
@@ -29,9 +29,10 @@ void record_packet_fault(uint32_t ssr)
     }
     asm volatile(
         "%0 = elr\n"
-        "%1 = badva1\n"
-        "%2 = badva\n"
-        : "=r"(f.pc), "=r"(f.va1), "=r"(f.badva)
+        "%1 = badva0\n"
+        "%2 = badva1\n"
+        "%3 = badva\n"
+        : "=r"(f.pc), "=r"(f.va0), "=r"(f.va1), "=r"(f.badva)
         :
         :
     );
@@ -400,6 +401,82 @@ static void test_fault_slot(void)
     printf("%s fault_slot\n", err == previous_errors ? "PASS" : "FAIL");
 }
 
+extern char validity_resume[];
+extern char mirror_resume[], predicate_resume[];
+static void test_fault_validity(void)
+{
+    static uint32_t data[8];
+    int previous_errors = err;
+
+    fault_count = 0;
+    memset((void *)faults, 0, sizeof(faults));
+    resume_pc = ADDRESS(validity_resume);
+    asm volatile(
+        "r0 = %0\n"
+        "r1 = ##0x9b901010\n"
+        "{\n"
+        "    r2 = memw(r0)\n"
+        "    r3 = memw(r1)\n"
+        "}:mem_noshuf\n"
+        ".global validity_resume\n"
+        "validity_resume:\n"
+        :
+        : "r"(data)
+        : "r0", "r1", "r2", "r3", "memory"
+    );
+    /* dual load fault count */
+    check32(fault_count, 1);
+    /* slot 0 miss */
+    check32(faults[0].cause, 0x70);
+    /* both slot addresses valid */
+    check32((faults[0].ssr >> 20) & 7, 3);
+    /* slot 0 BADVA0 */
+    check32(faults[0].va0, 0x9b901010);
+    /* slot 1 BADVA1 */
+    check32(faults[0].va1, ADDRESS(data));
+    resume_pc = ADDRESS(mirror_resume);
+    asm volatile(
+        "r0 = ##0x9b900008\n"
+        "r1 = %0\n"
+        "{\n"
+        "    r2 = memw(r0)\n"
+        "    r3 = memw(r1)\n"
+        "}:mem_noshuf\n"
+        ".global mirror_resume\n"
+        "mirror_resume:\n"
+        :
+        : "r"(data)
+        : "r0", "r1", "r2", "r3", "memory"
+    );
+    /* slot 1 fault with both valid */
+    check32((faults[1].ssr >> 20) & 7, 7);
+    /* unexecuted slot 0 address */
+    check32(faults[1].va0, ADDRESS(data));
+    /* slot 1 fault address */
+    check32(faults[1].va1, 0x9b900008);
+    resume_pc = ADDRESS(predicate_resume);
+    asm volatile(
+        "r0 = %0\n"
+        "r1 = ##0x9b901010\n"
+        "{\n"
+        "    p0 = cmp.eq(r0,r1)\n"
+        "    if (p0.new) r2 = memw(r0++#4)\n"
+        "    r3 = memw(r1)\n"
+        "}:mem_noshuf\n"
+        ".global predicate_resume\n"
+        "predicate_resume:\n"
+        :
+        : "r"(data)
+        : "r0", "r1", "r2", "r3", "p0", "memory"
+    );
+    /* all validity cases fault */
+    check32(fault_count, 3);
+    /* cancelled new-predicate load invalid */
+    check32((faults[2].ssr >> 20) & 7, 1);
+    resume_pc = 0;
+    printf("%s fault_validity\n", err == previous_errors ? "PASS" : "FAIL");
+}
+
 int main(void)
 {
     test_predicate_read();
@@ -412,7 +489,8 @@ int main(void)
     test_fetch_cause();
     test_fetch_pc();
     test_fault_slot();
+    test_fault_validity();
     setevb(old_evb);
-    printf("%s packet_tests: 8 cases\n", err ? "FAIL" : "PASS");
+    printf("%s packet_tests: 9 cases\n", err ? "FAIL" : "PASS");
     return err != 0;
 }
