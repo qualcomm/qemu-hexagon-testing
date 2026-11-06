@@ -20,7 +20,8 @@ cmake --build build-packets --target package_packet_tests
 
 The shared toolchain uses `HEXAGON_SDK_ROOT` or `HEXAGON_SDK_TOOLCHAIN`,
 as in the other standalone suites. To use a compiler outside the SDK,
-set `HEXAGON_SDK_TOOLCHAIN=/absolute/path/to/compiler/bin` before configuring.
+export `HEXAGON_SDK_TOOLCHAIN=/absolute/path/to/compiler/bin` before configuring
+and keep it set for builds, which can run CMake again.
 Configuration checks for V85, HMX and HLX compiler support.
 
 Installation uses `PacketTests_6.7.0.0_v85/bin`. The functional archive
@@ -39,3 +40,17 @@ must be added to `test_packets.py` after publication. Do not use a moving
 
 For local development, `QEMU_TEST_HEXAGON_PACKET_DIR` overrides the archive
 and selects the absolute `build-packets/bin` path.
+
+From the QEMU repository root, with QEMU built in `build-packet`:
+
+```sh
+QEMU_TEST_HEXAGON_PACKET_DIR=/absolute/path/to/build-packets/bin \
+QEMU_TEST_QEMU_BINARY="${PWD}/build-packet/qemu-system-hexagon" \
+  build-packet/run build-packet/pyvenv/bin/python \
+  tests/functional/hexagon/test_packets.py
+```
+
+The suite contains one regression binary for each of PB-01 through PB-14.
+The expected values come from the packet bug reports. PB-04 checks only
+the HMX operand fault, not HMX arithmetic. These tests do not replace all
+the generated case lists in those reports.

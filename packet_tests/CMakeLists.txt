@@ -55,6 +55,8 @@ add_packet_test(pb10_inactive_badva)
 add_packet_test(pb11_store_priority)
 add_packet_test(pb12_alignment_priority)
 add_packet_test(pb13_store_rollback)
+add_packet_test(pb14_vmemu_fault)
+target_compile_options(pb14_vmemu_fault PRIVATE -mhvx -mhvx-length=128B)
 
 # Match the reproducible HLX archive layout used by QEMU functional tests.
 set(PACKET_PACKAGE_FILES "")
