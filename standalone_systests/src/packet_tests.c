@@ -582,6 +582,74 @@ static void test_store_priority(void)
     printf("%s store_priority\n", err == previous_errors ? "PASS" : "FAIL");
 }
 
+extern char alignment_resume[], alignment_store[], alignment_cross[];
+static void test_alignment_priority(void)
+{
+    static uint32_t data[8];
+    int previous_errors = err;
+
+    fault_count = 0;
+    memset((void *)faults, 0, sizeof(faults));
+    resume_pc = ADDRESS(alignment_resume);
+    asm volatile(
+        "r0 = %0\n"
+        "r1 = ##0x9b901011\n"
+        "{\n"
+        "    memw(r0) = r0\n"
+        "    r3 = memw(r1)\n"
+        "}:mem_noshuf\n"
+        ".global alignment_resume\n"
+        "alignment_resume:\n"
+        :
+        : "r"(data)
+        : "r0", "r1", "r3", "memory"
+    );
+    /* misaligned missing load beats TLB miss */
+    check32(faults[0].cause, 0x20);
+    /* store rolled back on alignment fault */
+    check32(data[0], 0);
+    resume_pc = ADDRESS(alignment_store);
+    asm volatile(
+        "r0 = ##0x9b900009\n"
+        "r1 = ##0x9b901010\n"
+        "{\n"
+        "    memw(r0) = r0\n"
+        "    r3 = memw(r1)\n"
+        "}:mem_noshuf\n"
+        ".global alignment_store\n"
+        "alignment_store:\n"
+        :
+        :
+        : "r0", "r1", "r3", "memory"
+    );
+    /* misaligned store beats load miss */
+    check32(faults[1].cause, 0x21);
+    /* alignment fault slot 1 */
+    check32((faults[1].ssr >> 20) & 7, 7);
+    resume_pc = ADDRESS(alignment_cross);
+    asm volatile(
+        "r0 = ##0x9b900008\n"
+        "r1 = ##0x9b901011\n"
+        "{\n"
+        "    r2 = memw(r0)\n"
+        "    r3 = memw(r1)\n"
+        "}:mem_noshuf\n"
+        ".global alignment_cross\n"
+        "alignment_cross:\n"
+        :
+        :
+        : "r0", "r1", "r2", "r3", "memory"
+    );
+    /* alignment case count */
+    check32(fault_count, 3);
+    /* alignment precedes other slot TLB miss */
+    check32(faults[2].cause, 0x20);
+    /* alignment fault slot 0 */
+    check32((faults[2].ssr >> 20) & 7, 3);
+    resume_pc = 0;
+    printf("%s alignment_priority\n", err == previous_errors ? "PASS" : "FAIL");
+}
+
 int main(void)
 {
     test_predicate_read();
@@ -597,7 +665,8 @@ int main(void)
     test_fault_validity();
     test_inactive_badva();
     test_store_priority();
+    test_alignment_priority();
     setevb(old_evb);
-    printf("%s packet_tests: 11 cases\n", err ? "FAIL" : "PASS");
+    printf("%s packet_tests: 12 cases\n", err ? "FAIL" : "PASS");
     return err != 0;
 }
