@@ -9,7 +9,7 @@
 #define ADDRESS(x) ((uint32_t)(uintptr_t)(x))
 
 struct packet_fault {
-    uint32_t cause, pc;
+    uint32_t cause, pc, ssr, va1, badva;
 };
 
 static volatile struct packet_fault faults[3];
@@ -20,7 +20,7 @@ static uint32_t resume_pc;
 void record_packet_fault(uint32_t ssr)
 {
     unsigned n = fault_count++;
-    struct packet_fault f = { .cause = ssr & 255 };
+    struct packet_fault f = { .ssr = ssr, .cause = ssr & 255 };
 
     if (n >= 3 || !resume_pc) {
         printf("FAIL unexpected exception 0x%" PRIx32 "\n",
@@ -29,7 +29,9 @@ void record_packet_fault(uint32_t ssr)
     }
     asm volatile(
         "%0 = elr\n"
-        : "=r"(f.pc)
+        "%1 = badva1\n"
+        "%2 = badva\n"
+        : "=r"(f.pc), "=r"(f.va1), "=r"(f.badva)
         :
         :
     );
@@ -362,6 +364,42 @@ static void test_fetch_pc(void)
     printf("%s fetch_pc\n", err == previous_errors ? "PASS" : "FAIL");
 }
 
+extern char slot_resume[];
+static void test_fault_slot(void)
+{
+    int previous_errors = err;
+
+    fault_count = 0;
+    memset((void *)faults, 0, sizeof(faults));
+    resume_pc = ADDRESS(slot_resume);
+    asm volatile(
+        "r0 = ##0x9b900008\n"
+        "r1 = ##0x9b901010\n"
+        "p0 = cmp.eq(r0,r1)\n"
+        "{\n"
+        "    r2 = memw(r0)\n"
+        "    if (p0) memw(r1) = r0\n"
+        "}:mem_noshuf\n"
+        ".global slot_resume\n"
+        "slot_resume:\n"
+        :
+        :
+        : "r0", "r1", "r2", "p0", "memory"
+    );
+    /* slot 1 fault count */
+    check32(fault_count, 1);
+    /* slot 1 load miss */
+    check32(faults[0].cause, 0x70);
+    /* slot 1 BVS and validity */
+    check32((faults[0].ssr >> 20) & 7, 6);
+    /* slot 1 BADVA1 */
+    check32(faults[0].va1, 0x9b900008);
+    /* slot 1 BADVA alias */
+    check32(faults[0].badva, 0x9b900008);
+    resume_pc = 0;
+    printf("%s fault_slot\n", err == previous_errors ? "PASS" : "FAIL");
+}
+
 int main(void)
 {
     test_predicate_read();
@@ -373,7 +411,8 @@ int main(void)
     test_hlx_disable();
     test_fetch_cause();
     test_fetch_pc();
+    test_fault_slot();
     setevb(old_evb);
-    printf("%s packet_tests: 7 cases\n", err ? "FAIL" : "PASS");
+    printf("%s packet_tests: 8 cases\n", err ? "FAIL" : "PASS");
     return err != 0;
 }
