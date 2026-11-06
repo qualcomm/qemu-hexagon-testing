@@ -650,6 +650,44 @@ static void test_alignment_priority(void)
     printf("%s alignment_priority\n", err == previous_errors ? "PASS" : "FAIL");
 }
 
+extern char rollback_resume[];
+static void test_store_rollback(void)
+{
+    static uint32_t data[8] __attribute__((aligned(8)));
+    int previous_errors = err;
+
+    fault_count = 0;
+    memset((void *)faults, 0, sizeof(faults));
+    for (unsigned i = 0; i < 8; i++) {
+        data[i] = 0xffe2c5a8;
+    }
+    resume_pc = ADDRESS(rollback_resume);
+    asm volatile(
+        "r0 = %0\n"
+        "r1 = add(r0,#9)\n"
+        "r2 = ##0xc0de0011\n"
+        "{\n"
+        "    memw(r0) = r2\n"
+        "    memw(r1) = r2\n"
+        "}:mem_noshuf\n"
+        ".global rollback_resume\n"
+        "rollback_resume:\n"
+        :
+        : "r"(data)
+        : "r0", "r1", "r2", "memory"
+    );
+    /* store rollback fault count */
+    check32(fault_count, 1);
+    /* slot 0 store alignment fault */
+    check32(faults[0].cause, 0x21);
+    for (unsigned i = 0; i < 8; i++) {
+        /* neither store changes memory */
+        check32(data[i], 0xffe2c5a8);
+    }
+    resume_pc = 0;
+    printf("%s store_rollback\n", err == previous_errors ? "PASS" : "FAIL");
+}
+
 int main(void)
 {
     test_predicate_read();
@@ -666,7 +704,8 @@ int main(void)
     test_inactive_badva();
     test_store_priority();
     test_alignment_priority();
+    test_store_rollback();
     setevb(old_evb);
-    printf("%s packet_tests: 12 cases\n", err ? "FAIL" : "PASS");
+    printf("%s packet_tests: 13 cases\n", err ? "FAIL" : "PASS");
     return err != 0;
 }
