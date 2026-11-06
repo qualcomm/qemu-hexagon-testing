@@ -527,6 +527,61 @@ static void test_inactive_badva(void)
     printf("%s inactive_badva\n", err == previous_errors ? "PASS" : "FAIL");
 }
 
+extern char priority_resume[], priority_second[];
+static void test_store_priority(void)
+{
+    static uint32_t data[1024] __attribute__((aligned(4096)));
+    int previous_errors = err;
+    uint64_t entry = tlbr(1);
+
+    fault_count = 0;
+    memset((void *)faults, 0, sizeof(faults));
+    resume_pc = ADDRESS(priority_resume);
+    asm volatile(
+        "r0 = ##0x9b900008\n"
+        "r1 = ##0x9b901010\n"
+        "{\n"
+        "    memw(r0) = r0\n"
+        "    r3 = memw(r1)\n"
+        "}:mem_noshuf\n"
+        ".global priority_resume\n"
+        "priority_resume:\n"
+        :
+        :
+        : "r0", "r1", "r3", "memory"
+    );
+    /* slot 1 store miss wins */
+    check32(faults[0].cause, 0x71);
+    /* store slot wins with both valid */
+    check32((faults[0].ssr >> 20) & 7, 7);
+    /* winning store address */
+    check32(faults[0].va1, 0x9b900008);
+    map_page(1, 0x9b900000, ADDRESS(data));
+    resume_pc = ADDRESS(priority_second);
+    asm volatile(
+        "r0 = ##0x9b900008\n"
+        "r1 = ##0x9b901010\n"
+        "{\n"
+        "    memw(r0) = r0\n"
+        "    r3 = memw(r1)\n"
+        "}:mem_noshuf\n"
+        ".global priority_second\n"
+        "priority_second:\n"
+        :
+        :
+        : "r0", "r1", "r3", "memory"
+    );
+    /* two priority fault cases */
+    check32(fault_count, 2);
+    /* slot 0 load miss after mapping store */
+    check32(faults[1].cause, 0x70);
+    /* store not committed before load fault */
+    check32(data[2], 0);
+    tlbw(entry, 1);
+    resume_pc = 0;
+    printf("%s store_priority\n", err == previous_errors ? "PASS" : "FAIL");
+}
+
 int main(void)
 {
     test_predicate_read();
@@ -541,7 +596,8 @@ int main(void)
     test_fault_slot();
     test_fault_validity();
     test_inactive_badva();
+    test_store_priority();
     setevb(old_evb);
-    printf("%s packet_tests: 10 cases\n", err ? "FAIL" : "PASS");
+    printf("%s packet_tests: 11 cases\n", err ? "FAIL" : "PASS");
     return err != 0;
 }
