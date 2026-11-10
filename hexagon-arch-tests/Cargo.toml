@@ -85,3 +85,7 @@ path = "src/bin/test_hvx_context.rs"
 [[bin]]
 name = "test_dma"
 path = "src/bin/test_dma.rs"
+
+[[bin]]
+name = "test_framelimit"
+path = "src/bin/test_framelimit.rs"
