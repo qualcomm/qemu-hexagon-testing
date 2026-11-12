@@ -97,6 +97,7 @@ set(STANDALONE_PROGRAMS
     pend_wake_wait
     pendalot
     pcycle
+    packet_tests
     pmu
     qfloat_test
     qtimer
@@ -187,6 +188,10 @@ endfunction()
 foreach(PROGRAM ${STANDALONE_PROGRAMS})
     add_systest_program(${PROGRAM})
 endforeach()
+
+target_compile_options(packet_tests PRIVATE -O2 -mv85 -mhmx -mhlx
+    -mhvx -mhvx-length=128B)
+target_link_options(packet_tests PRIVATE -mv85)
 
 # Keep the inline assembly intrinsics at the same optimization level as QEMU's
 # TCG tests. The compiler does not track their L-register state.
