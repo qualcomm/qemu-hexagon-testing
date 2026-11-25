@@ -164,6 +164,118 @@ fn test_linked_blocks() {
     }
 }
 
+/// Addresses below the image that the TLB does not map until they are used.
+/// The default miss handler maps a large page around the first one it is
+/// given, so nothing may touch them from the CPU until the DMA has run.
+const MISS_SOURCE: u32 = 0x9b40_0000;
+const MISS_DESCRIPTOR: u32 = 0x9b50_0000;
+const MISS_DESTINATION: u32 = 0x9b60_0000;
+/// The CPU's views of the same memory, for writing it before the DMA runs
+/// and reading it back after.
+const ALIAS_SOURCE: u32 = 0x9b70_0000;
+const ALIAS_DESCRIPTOR: u32 = 0x9b71_0000;
+const ALIAS_DESTINATION: u32 = 0x9b72_0000;
+/// TLB indices below crt0's `TLB_FIXED_ENTRIES` are never recycled by the
+/// default miss handler, and index 0 maps the image.
+const IDX_ALIAS_SOURCE: u32 = 1;
+const IDX_ALIAS_DESCRIPTOR: u32 = 2;
+const IDX_ALIAS_DESTINATION: u32 = 3;
+const IDX_PIN_A: u32 = 4;
+const IDX_PIN_B: u32 = 5;
+const MISS_BYTES: usize = 200;
+
+/// The TLB index that maps the address, if any.
+fn probe(va: u32) -> i32 {
+    tlb_probe(make_tlb_hi_4k(va))
+}
+
+fn map_4k(va: u32, pa: u32, idx: u32) {
+    tlb_write(make_tlb_hi_4k(va), make_tlb_lo_4k(pa, TLB_PERM_XWRU, true), idx);
+}
+
+/// Drop what the default miss handler mapped for the address.
+fn unmap_recycled(va: u32) {
+    loop {
+        let index = probe(va);
+        if index < 0 {
+            break;
+        }
+        check!(index as u32 >= TLB_FIXED_ENTRIES);
+        if (index as u32) < TLB_FIXED_ENTRIES {
+            break;
+        }
+        tlb_invalidate(index as u32);
+    }
+}
+
+/// The DMA reads its descriptor and writes its destination through pages
+/// that miss in the TLB.  The miss is taken by the thread that started the
+/// DMA, handled by the default handler, which maps the page, and the DMA
+/// instruction is executed again.  The replayed command must run the
+/// descriptor, as the DMA waits for such a miss to be fixed rather than
+/// failing.  `pin_descriptor` keeps the descriptor's page mapped so that
+/// the miss is on the payload, and `pin_payload` the other way round.
+fn run_translation_miss(pin_descriptor: bool, pin_payload: bool) {
+    unsafe {
+        let source = ALIAS_SOURCE as *mut u8;
+        let destination = ALIAS_DESTINATION as *const u8;
+        let descriptor = ALIAS_DESCRIPTOR as *mut Descriptor0;
+
+        unmap_recycled(MISS_SOURCE);
+        unmap_recycled(MISS_DESCRIPTOR);
+        unmap_recycled(MISS_DESTINATION);
+
+        map_4k(ALIAS_SOURCE, MISS_SOURCE, IDX_ALIAS_SOURCE);
+        map_4k(ALIAS_DESCRIPTOR, MISS_DESCRIPTOR, IDX_ALIAS_DESCRIPTOR);
+        map_4k(ALIAS_DESTINATION, MISS_DESTINATION, IDX_ALIAS_DESTINATION);
+        fill(source, MISS_BYTES, 0x5b);
+        fill(ALIAS_DESTINATION as *mut u8, MISS_BYTES, 0xc7);
+        (*descriptor).next = 0;
+        (*descriptor).info = MISS_BYTES as u32;
+        (*descriptor).source = MISS_SOURCE;
+        (*descriptor).destination = MISS_DESTINATION;
+        release_descriptor(descriptor as *const u8);
+
+        if pin_descriptor {
+            map_4k(MISS_DESCRIPTOR, MISS_DESCRIPTOR, IDX_PIN_A);
+        }
+        if pin_payload {
+            map_4k(MISS_SOURCE, MISS_SOURCE, IDX_PIN_A);
+            map_4k(MISS_DESTINATION, MISS_DESTINATION, IDX_PIN_B);
+        }
+        check!((probe(MISS_DESCRIPTOR) >= 0) == pin_descriptor);
+        check!((probe(MISS_SOURCE) >= 0) == pin_payload);
+        check!((probe(MISS_DESTINATION) >= 0) == pin_payload);
+
+        start_dma(MISS_DESCRIPTOR as *const u8);
+        check32!(wait_dma(), 0);
+
+        // Whatever was not pinned is mapped now.
+        check!(probe(MISS_DESCRIPTOR) >= 0);
+        check!(probe(MISS_SOURCE) >= 0);
+        check!(probe(MISS_DESTINATION) >= 0);
+        check!((*descriptor).info & DESC_DONE != 0);
+        check_equal(source, destination, MISS_BYTES);
+
+        tlb_invalidate(IDX_PIN_A);
+        tlb_invalidate(IDX_PIN_B);
+        tlb_invalidate(IDX_ALIAS_SOURCE);
+        tlb_invalidate(IDX_ALIAS_DESCRIPTOR);
+        tlb_invalidate(IDX_ALIAS_DESTINATION);
+        unmap_recycled(MISS_SOURCE);
+        unmap_recycled(MISS_DESCRIPTOR);
+        unmap_recycled(MISS_DESTINATION);
+    }
+}
+
+fn test_descriptor_translation_miss() {
+    run_translation_miss(false, true);
+}
+
+fn test_payload_translation_miss() {
+    run_translation_miss(true, false);
+}
+
 /// DMA specification Chapter 4 defines these commands to return DM0. An idle
 /// DMA engine therefore returns state 0 for each command.
 fn test_idle_commands() {
@@ -307,6 +419,8 @@ pub extern "C" fn rust_main() -> i32 {
     run_test("linked blocks", test_linked_blocks);
     run_test("strided blocks", test_strided_blocks);
     run_test("standard 2D", test_standard_2d);
+    run_test("descriptor translation miss", test_descriptor_translation_miss);
+    run_test("payload translation miss", test_payload_translation_miss);
     if version >= 2 {
         run_test("constant fill", test_constant_fill);
     }
